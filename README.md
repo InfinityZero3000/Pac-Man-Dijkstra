@@ -1,81 +1,153 @@
-# Maze Game - Pacman Style with Dijkstra Algorithm
+# 🎮 Maze Game - AI Pathfinding with Dijkstra Algorithm
 
-This is a maze game built in Python using Pygame, featuring a Pacman-like character that navigates through a randomly generated maze. The game utilizes Dijkstra's algorithm to find the shortest path to the goal.
+Một trò chơi mê cung thông minh được xây dựng bằng Python và Pygame, sử dụng thuật toán Dijkstra để tìm đường đi tối ưu. Game mô phỏng phong cách Pacman với khả năng tạo mê cung ngẫu nhiên và hiển thị đường đi thông minh.
 
-## Features
+## ✨ Tính năng chính
 
-- Randomly generated maze using DFS algorithm with connectivity guarantee
-- Pacman-like character movement
-- Dijkstra's algorithm for shortest path finding with path validation
-- Pygame-based graphics
-- Interactive controls
-- Automatic maze regeneration if no path exists
+- 🏗️ **Tạo mê cung ngẫu nhiên**: Sử dụng thuật toán DFS với đảm bảo kết nối
+- 🎯 **Tìm đường thông minh**: Thuật toán Dijkstra/A* với heuristic Manhattan
+- 🎨 **Giao diện đồ họa**: Pygame với hiệu ứng mượt mà và màu sắc rõ ràng
+- 🕹️ **Điều khiển trực quan**: Di chuyển bằng phím mũi tên, tìm đường bằng Space
+- 🔄 **Làm mới tự động**: Tạo mê cung mới nếu không có đường đi
+- 🛡️ **Kiểm tra hợp lệ**: Đảm bảo đường đi không xuyên qua tường
+- 📊 **Thống kê chi tiết**: Hiển thị số bước và thời gian thực hiện
 
-## Requirements
+## 📋 Yêu cầu hệ thống
 
-Install the required packages using:
+Cài đặt các package cần thiết:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## How to Run
-
-Run the game using:
+Hoặc cài đặt thủ công:
 
 ```bash
-python quick_test.py
+pip install pygame numpy
 ```
 
-Or directly:
+## 🚀 Cách chạy
+
+Chạy game trực tiếp:
 
 ```bash
 python maze_game.py
 ```
 
-## Controls
+## 🎮 Hướng dẫn điều khiển
 
-- **Arrow Keys**: Move the character
-- **Space**: Find and display the shortest path to the goal
-- **R**: Reset the game with a new maze
-- **Escape**: Quit the game
+- **⬆️⬇️⬅️➡️ Phím mũi tên**: Di chuyển nhân vật (chấm vàng)
+- **🔍 Space**: Tìm và hiển thị đường đi ngắn nhất đến đích (chấm xanh lá)
+- **🔄 R**: Tạo mê cung mới
+- **❌ Escape**: Thoát game
 
-## Files
+## 📁 Cấu trúc dự án
 
-- `maze_generator.py`: Contains the MazeGenerator class for creating random mazes
-- `dijkstra_algorithm.py`: Implements Dijkstra's algorithm with path validation
-- `maze_game.py`: Main game class using Pygame
-- `quick_test.py`: Entry point to run the game
-- `test_dijkstra.py`: Basic test for maze generation and pathfinding
-- `test_maze_comprehensive.py`: Comprehensive test suite for larger mazes and complexity analysis
-- `requirements.txt`: List of required Python packages
-
-## Testing
-
-Run the comprehensive test suite to validate maze generation and pathfinding:
-
-```bash
-python test_maze_comprehensive.py
+```
+game-AI/
+├── maze_game.py              # Game chính với giao diện Pygame
+├── maze_generator.py         # Tạo mê cung ngẫu nhiên
+├── dijkstra_algorithm.py     # Thuật toán tìm đường Dijkstra/A*
+├── path_validator.py         # Kiểm tra tính hợp lệ của đường đi
+├── config.py                 # Cấu hình game
+├── pathfinding_data_logger.py # Ghi log dữ liệu pathfinding
+├── scripts/
+│   ├── generate_training_data.py # Tạo dữ liệu training
+│   ├── train_model.py           # Huấn luyện model AI
+│   └── infer_policy.py          # Suy luận policy
+├── requirements.txt          # Các package cần thiết
+└── README.md                # Tài liệu này
 ```
 
-This will test:
-- Different maze sizes (21x21 to 51x51)
-- Path validation and alternative paths
-- Maze complexity analysis
-- Pathfinding performance benchmarks
+## 🧪 Testing và Debug
 
-## Maze Characteristics
+Chạy các test để kiểm tra tính năng:
 
-- **Default Size**: 41x41 (larger than original 21x21)
-- **Size Range**: 21x21 to 51x51 (configurable)
-- **Path Density**: ~50% open spaces for balanced gameplay
-- **Complexity**: Includes dead ends and branching points for interesting navigation
-- **Connectivity**: Guaranteed path from start to goal
-- **Performance**: Fast pathfinding even on large mazes
+```bash
+# Test tổng quát
+python test_maze_comprehensive.py
 
-## Technical Details
+# Test pathfinding cơ bản  
+python test_dijkstra.py
 
-- **Maze Generation**: Uses randomized DFS to create perfect mazes
-- **Pathfinding**: Dijkstra's algorithm ensures shortest path
-- **Validation**: Paths are validated to prevent going through walls
-- **Connectivity**: Mazes are guaranteed to have a path from start to goal
+# Debug coordinate system
+python debug_coordinates.py
+
+# Test wall crossing prevention
+python test_enhanced_wall_crossing.py
+```
+
+## ⚙️ Thông số kỹ thuật
+
+### Cấu hình mê cung
+- **Kích thước mặc định**: 41x41 cells
+- **Kích thước cell**: 20x20 pixels
+- **Kích thước màn hình**: 820x820 pixels
+- **Tỷ lệ đường đi**: ~50% không gian mở
+- **Độ phức tạp**: Bao gồm ngõ cụt và nhánh rẽ
+
+### Thuật toán
+- **Tạo mê cung**: Randomized Depth-First Search (DFS)
+- **Tìm đường**: Dijkstra với A* optimization
+- **Heuristic**: Manhattan distance
+- **Validation**: Kiểm tra từng bước không đi qua tường
+- **Performance**: Tối ưu cho mê cung lớn
+
+### Màu sắc và ký hiệu
+- 🟦 **Màu xanh**: Tường/vật cản (maze[row,col] = 1)
+- ⬜ **Màu đen**: Đường đi (maze[row,col] = 0)  
+- 🟡 **Chấm vàng**: Nhân vật (player)
+- 🟢 **Chấm xanh lá**: Đích đến (goal)
+- 🔴 **Chấm đỏ**: Đường đi tối ưu
+
+## 🔧 Cấu hình nâng cao
+
+Có thể điều chỉnh trong `maze_game.py`:
+
+```python
+# Thay đổi kích thước mê cung
+width=41, height=41, cell_size=20
+
+# Thay đổi màu sắc
+self.BLACK = (0, 0, 0)      # Đường đi
+self.BLUE = (0, 0, 255)     # Tường
+self.YELLOW = (255, 255, 0) # Player
+self.GREEN = (0, 255, 0)    # Goal
+self.RED = (255, 0, 0)      # Path
+```
+
+## 🐛 Troubleshooting
+
+### Lỗi "No path found!"
+- Mê cung được tạo tự động với đảm bảo kết nối
+- Nếu vẫn gặp lỗi, ấn **R** để tạo mê cung mới
+
+### Đường đi đi qua tường
+- Đã được khắc phục với validation nghiêm ngặt
+- Chỉ hiển thị đường đi hợp lệ (maze[row,col] = 0)
+
+### Performance chậm
+- Tối ưu cho mê cung 41x41
+- Có thể giảm kích thước nếu cần tăng tốc
+
+## 📈 Các cải tiến đã thực hiện
+
+- ✅ Fix coordinate system mismatch
+- ✅ Implement strict path validation  
+- ✅ Optimize A* with Manhattan heuristic
+- ✅ Add comprehensive error handling
+- ✅ Improve visual rendering
+- ✅ Add debugging utilities
+- ✅ Enhance user interface
+
+## 🤝 Đóng góp
+
+Mọi đóng góp đều được chào đón! Hãy tạo issue hoặc pull request.
+
+## 📄 License
+
+MIT License - Xem file LICENSE để biết thêm chi tiết.
+
+---
+
+*Được phát triển với ❤️ bằng Python và Pygame*
