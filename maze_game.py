@@ -5,7 +5,7 @@ from dijkstra_algorithm import DijkstraAlgorithm
 from path_validator import PathValidator
 
 class MazeGame:
-    def __init__(self, width=41, height=41, cell_size=12):
+    def __init__(self, width=61, height=40, cell_size=23):
         self.maze_gen = MazeGenerator(width, height)
         self.dijkstra = DijkstraAlgorithm(self.maze_gen)
         self.path_validator = PathValidator(self.maze_gen)  # Add path validator
