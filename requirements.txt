@@ -1,0 +1,6 @@
+gym-maze
+pygame
+numpy
+matplotlib
+Pillow
+torch

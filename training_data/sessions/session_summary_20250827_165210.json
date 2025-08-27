@@ -1,0 +1,15 @@
+{
+  "session_id": "20250827_165210",
+  "timestamp": "2025-08-27T16:52:10.232898",
+  "total_mazes": 5,
+  "summary": {
+    "total_tests": 5,
+    "successful_tests": 5,
+    "success_rate": 1.0,
+    "avg_path_length": 88.2,
+    "avg_distance": 87.2,
+    "avg_computation_time": 0.5482,
+    "avg_efficiency": 0.8895645316254301,
+    "avg_nodes_explored": 101.0
+  }
+}
