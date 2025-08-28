@@ -59,24 +59,6 @@ game-AI/
 └── README.md                # Tài liệu này
 ```
 
-## 🧪 Testing và Debug
-
-Chạy các test để kiểm tra tính năng:
-
-```bash
-# Test tổng quát
-python test_maze_comprehensive.py
-
-# Test pathfinding cơ bản  
-python test_dijkstra.py
-
-# Debug coordinate system
-python debug_coordinates.py
-
-# Test wall crossing prevention
-python test_enhanced_wall_crossing.py
-```
-
 ## ⚙️ Thông số kỹ thuật
 
 ### Cấu hình mê cung
@@ -115,39 +97,3 @@ self.YELLOW = (255, 255, 0) # Player
 self.GREEN = (0, 255, 0)    # Goal
 self.RED = (255, 0, 0)      # Path
 ```
-
-## 🐛 Troubleshooting
-
-### Lỗi "No path found!"
-- Mê cung được tạo tự động với đảm bảo kết nối
-- Nếu vẫn gặp lỗi, ấn **R** để tạo mê cung mới
-
-### Đường đi đi qua tường
-- Đã được khắc phục với validation nghiêm ngặt
-- Chỉ hiển thị đường đi hợp lệ (maze[row,col] = 0)
-
-### Performance chậm
-- Tối ưu cho mê cung 41x41
-- Có thể giảm kích thước nếu cần tăng tốc
-
-## 📈 Các cải tiến đã thực hiện
-
-- ✅ Fix coordinate system mismatch
-- ✅ Implement strict path validation  
-- ✅ Optimize A* with Manhattan heuristic
-- ✅ Add comprehensive error handling
-- ✅ Improve visual rendering
-- ✅ Add debugging utilities
-- ✅ Enhance user interface
-
-## 🤝 Đóng góp
-
-Mọi đóng góp đều được chào đón! Hãy tạo issue hoặc pull request.
-
-## 📄 License
-
-MIT License - Xem file LICENSE để biết thêm chi tiết.
-
----
-
-*Được phát triển với ❤️ bằng Python và Pygame*
