@@ -376,7 +376,7 @@ class DijkstraAlgorithm:
 
     def _prioritize_objectives(self, start, objectives, ghost_positions, 
                               power_pellet_positions=None, dots_positions=None, exit_gate=None):
-        """Prioritize objectives based on current game state"""
+        """Prioritize objectives based on current game state - CHỈ ƯU TIÊN EXIT GATE"""
         prioritized = []
         
         for obj in objectives:
@@ -384,15 +384,17 @@ class DijkstraAlgorithm:
             distance = self._manhattan_distance(start, obj)
             danger_level = self._calculate_objective_danger(obj, ghost_positions)
             
-            # Calculate priority weight
-            if obj_type == 'power_pellet':
-                priority = 100 - danger_level * 10 - distance * 0.5
-            elif obj_type == 'exit':
-                priority = 80 - danger_level * 5 - distance * 0.3
-            elif obj_type == 'dot':
-                priority = 50 - danger_level * 15 - distance * 1.0
+            # Calculate priority weight - CHỈ ƯU TIÊN EXIT GATE
+            if obj_type == 'exit':
+                priority = 100 - danger_level * 5 - distance * 0.3
             else:
-                priority = 30 - danger_level * 20 - distance * 1.5
+                # ❌ DISABLED: Không ưu tiên power pellets và dots nữa
+                # if obj_type == 'power_pellet':
+                #     priority = 100 - danger_level * 10 - distance * 0.5
+                # elif obj_type == 'dot':
+                #     priority = 50 - danger_level * 15 - distance * 1.0
+                # else:
+                priority = 10 - danger_level * 20 - distance * 2.0  # Thấp hơn exit gate
             
             prioritized.append((obj_type, obj, priority))
         
@@ -459,57 +461,46 @@ class DijkstraAlgorithm:
 
     def _tactical_detour_strategy(self, start, target, ghost_positions, 
                                  priority_weight, extra_data):
-        """Path that collects items along the way"""
-        if not extra_data:
-            return self._ghost_avoidance_strategy(start, target, ghost_positions, priority_weight)
+        """Path that collects items along the way - DISABLED: Không thu thập items nữa"""
+        # ❌ DISABLED: Không thu thập dots/pellets nữa, chỉ đi thẳng đến target
+        # if not extra_data:
+        #     return self._ghost_avoidance_strategy(start, target, ghost_positions, priority_weight)
+        #
+        # dots = extra_data.get('dots', [])
+        # pellets = extra_data.get('pellets', [])
+        #
+        # # Find path that goes through valuable items
+        # best_path = None
+        # best_score = float('-inf')
+        #
+        # # Try direct path first
+        # direct_path, direct_score = self._ghost_avoidance_strategy(
+        #     start, target, ghost_positions, priority_weight
+        # )
+        #
+        # if direct_path:
+        #     # Calculate bonus for items collected along the way
+        #     bonus = self._calculate_collection_bonus(direct_path, dots, pellets)
+        #     total_score = direct_score + bonus
+        #
+        #     if total_score > best_score:
+        #         best_score = total_score
+        #         best_path = direct_path
+        #
+        # # Try detour through valuable items
+        # valuable_items = pellets[:3] + dots[:5]  # Limit to avoid too much computation
+        #
+        # for item in valuable_items:
+        #     # Path: start -> item -> target
+        #     path1, cost1 = self.shortest_path_with_ghost_avoidance(
+        #         start, item, ghost_positions, avoidance_radius=4
+        #     )
+        #     path2, cost2 = self.shortest_path_with_ghost_avoidance(
+        #         item, target, ghost_positions, avoidance_radius=4
+        #     )
         
-        dots = extra_data.get('dots', [])
-        pellets = extra_data.get('pellets', [])
-        
-        # Find path that goes through valuable items
-        best_path = None
-        best_score = float('-inf')
-        
-        # Try direct path first
-        direct_path, direct_score = self._ghost_avoidance_strategy(
-            start, target, ghost_positions, priority_weight
-        )
-        
-        if direct_path:
-            # Calculate bonus for items collected along the way
-            bonus = self._calculate_collection_bonus(direct_path, dots, pellets)
-            total_score = direct_score + bonus
-            
-            if total_score > best_score:
-                best_score = total_score
-                best_path = direct_path
-        
-        # Try detour through valuable items
-        valuable_items = pellets[:3] + dots[:5]  # Limit to avoid too much computation
-        
-        for item in valuable_items:
-            # Path: start -> item -> target
-            path1, cost1 = self.shortest_path_with_ghost_avoidance(
-                start, item, ghost_positions, avoidance_radius=4
-            )
-            path2, cost2 = self.shortest_path_with_ghost_avoidance(
-                item, target, ghost_positions, avoidance_radius=4
-            )
-            
-            if path1 and path2:
-                # Combine paths
-                full_path = path1 + path2[1:]  # Remove duplicate node
-                safety_score = self._calculate_path_safety(full_path, ghost_positions)
-                collection_bonus = self._calculate_collection_bonus(full_path, dots, pellets)
-                
-                total_cost = cost1 + cost2
-                score = priority_weight + safety_score * 8 + collection_bonus * 15 - total_cost * 0.7
-                
-                if score > best_score:
-                    best_score = score
-                    best_path = full_path
-        
-        return best_path, best_score
+        # Chỉ đi thẳng đến target, không detour để thu thập items
+        return self._ghost_avoidance_strategy(start, target, ghost_positions, priority_weight)
 
     def _emergency_escape_strategy(self, start, target, ghost_positions, priority_weight):
         """Emergency escape route when in immediate danger"""
@@ -582,21 +573,23 @@ class DijkstraAlgorithm:
         return [pos for pos, score in safe_zones]
 
     def _calculate_collection_bonus(self, path, dots, pellets):
-        """Calculate bonus score for items that would be collected along path"""
-        bonus = 0
-        path_set = set(path)
-        
-        # Bonus for dots
-        for dot in dots:
-            if dot in path_set:
-                bonus += 5
-        
-        # Higher bonus for power pellets
-        for pellet in pellets:
-            if pellet in path_set:
-                bonus += 20
-        
-        return bonus
+        """Calculate bonus score for items that would be collected along path - DISABLED"""
+        # ❌ DISABLED: Không tính bonus cho việc thu thập dots/pellets nữa
+        # bonus = 0
+        # path_set = set(path)
+        #
+        # # Bonus for dots
+        # for dot in dots:
+        #     if dot in path_set:
+        #         bonus += 5
+        #
+        # # Higher bonus for power pellets
+        # for pellet in pellets:
+        #     if pellet in path_set:
+        #         bonus += 20
+        #
+        # return bonus
+        return 0  # Không có bonus nào cho việc thu thập items
 
     def _calculate_path_safety(self, path, ghost_positions):
         """Calculate overall safety score for a path"""

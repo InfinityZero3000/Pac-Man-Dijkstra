@@ -7,7 +7,7 @@ from dijkstra_algorithm import DijkstraAlgorithm
 import config
 
 class PacmanGame:
-    def __init__(self, width=51, height=41, cell_size=23):
+    def __init__(self, width=71, height=41, cell_size=23):
         self.maze_gen = MazeGenerator(width, height)
         self.dijkstra = DijkstraAlgorithm(self.maze_gen)
         self.cell_size = cell_size
@@ -172,7 +172,7 @@ class PacmanGame:
         """Place dots and power pellets on the maze"""
         self.dots = []
         self.power_pellets = []
-        
+
         # First, collect all valid positions (open paths)
         valid_positions = []
         for y in range(self.maze_gen.height):
@@ -181,23 +181,23 @@ class PacmanGame:
                     # Skip start and goal positions
                     if not ((y, x) == self.start or (y, x) == self.goal):
                         valid_positions.append((x, y))
-        
+
         # Randomly select positions for power pellets with minimum distance constraint
         power_pellet_positions = []
         min_distance = 8  # Minimum distance between power pellets
         max_pellets = 12  # Maximum number of power pellets
         attempts = 0
         max_attempts = 1000
-        
+
         while len(power_pellet_positions) < max_pellets and attempts < max_attempts:
             attempts += 1
             # Pick a random position
             if not valid_positions:
                 break
-            
+
             candidate = random.choice(valid_positions)
             x, y = candidate
-            
+
             # Check if this position is far enough from existing power pellets
             is_valid = True
             for px, py in power_pellet_positions:
@@ -205,19 +205,19 @@ class PacmanGame:
                 if distance < min_distance:
                     is_valid = False
                     break
-            
+
             if is_valid:
                 power_pellet_positions.append(candidate)
                 # Remove nearby positions from valid_positions to speed up search
-                valid_positions = [pos for pos in valid_positions 
+                valid_positions = [pos for pos in valid_positions
                                  if math.sqrt((pos[0] - x)**2 + (pos[1] - y)**2) >= min_distance]
-        
+
         # Place dots and power pellets
         for y in range(self.maze_gen.height):
             for x in range(self.maze_gen.width):
                 if self.maze[y, x] == 0:  # Open path
                     center = ((x + 0.5) * self.cell_size, (y + 0.5) * self.cell_size)
-                    
+
                     if (x, y) in power_pellet_positions:
                         self.power_pellets.append(center)
                     else:
@@ -1054,186 +1054,70 @@ class PacmanGame:
             print(" No exit gate found!")
 
     def find_auto_target(self):
-        """Find the best target for Pacman using intelligent prioritization with stuck avoidance"""
+        """GOAL-FIRST target finding - Ưu tiên goal tuyệt đối"""
         try:
-            pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
-            pacman_pos = (pacman_row, pacman_col)
+            # Sử dụng logic goal-first mới
+            self.find_goal_first()
 
-            # Get ghost positions for avoidance
-            ghost_positions = [(int(g['pos'][1]), int(g['pos'][0])) for g in self.ghosts]
+            # Nếu tìm được goal, set làm auto_target
+            if self.current_goal:
+                self.auto_target = self.current_goal
+                self.calculate_auto_path()
+                print(f"🎯 Auto target set: {self.auto_target}")
+            else:
+                print("❌ No auto target found")
+                self.auto_target = None
+                self.auto_path = []
 
-            # Track failed targets to avoid repeatedly selecting them
-            if not hasattr(self, 'failed_targets'):
-                self.failed_targets = {}
-            
-            # Clean old failed targets (older than 10 seconds)
-            current_time = pygame.time.get_ticks()
-            self.failed_targets = {
-                target: time for target, time in self.failed_targets.items()
-                if current_time - time < 10000
-            }
-
-            # If no dots or pellets left, go to exit gate
-            if not self.dots and not self.power_pellets:
-                if hasattr(self, 'exit_gate'):
-                    self.auto_target = self.exit_gate
-                    self.calculate_auto_path()
-                    return
-
-            # Strategic target selection based on game state
-            candidates = []
-            
-            # Power pellets - highest priority when ghosts are near
-            min_ghost_distance = float('inf')
-            if ghost_positions:
-                min_ghost_distance = min(
-                    abs(pacman_row - g_pos[0]) + abs(pacman_col - g_pos[1])
-                    for g_pos in ghost_positions
-                )
-            
-            # Add power pellets as candidates
-            for pellet in self.power_pellets:
-                # Convert screen coordinates to maze coordinates
-                pellet_col = int((pellet[0] - self.cell_size // 2) / self.cell_size)
-                pellet_row = int((pellet[1] - self.cell_size // 2) / self.cell_size)
-                pellet_pos = (pellet_row, pellet_col)
-                
-                # Skip if this target has failed recently
-                if pellet_pos in self.failed_targets:
-                    continue
-                
-                distance = abs(pacman_row - pellet_row) + abs(pacman_col - pellet_col)
-                
-                # High priority if ghosts are close
-                if min_ghost_distance <= 5:
-                    priority = 1000 - distance  # Very high priority
-                else:
-                    priority = 500 - distance  # Medium priority
-                
-                candidates.append((pellet_pos, priority, 'power_pellet'))
-            
-            # Add nearby dots with cluster bonus
-            dot_clusters = self._find_dot_clusters()
-            for cluster_center, cluster_size in dot_clusters:
-                # Skip if this target has failed recently
-                if cluster_center in self.failed_targets:
-                    continue
-                    
-                distance = abs(pacman_row - cluster_center[0]) + abs(pacman_col - cluster_center[1])
-                
-                # Higher priority for larger clusters, but not if too far
-                if distance <= 20:  # Only consider reasonably close clusters
-                    cluster_bonus = cluster_size * 15
-                    priority = 400 + cluster_bonus - distance
-                    candidates.append((cluster_center, priority, 'dot_cluster'))
-            
-            # Add individual nearby dots
-            dots_to_check = self.dots[:15]  # Limit for performance
-            for dot in dots_to_check:
-                # Convert screen coordinates to maze coordinates
-                dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
-                dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
-                dot_pos = (dot_row, dot_col)
-                
-                # Skip if this target has failed recently
-                if dot_pos in self.failed_targets:
-                    continue
-                
-                distance = abs(pacman_row - dot_row) + abs(pacman_col - dot_col)
-                
-                # Only consider nearby dots
-                if distance <= 12:
-                    priority = 250 - distance
-                    candidates.append((dot_pos, priority, 'dot'))
-            
-            # If no good candidates (all targets have failed recently), force retry some targets
-            if not candidates and self.failed_targets:
-                print("🔄 All targets failed recently, retrying...")
-                # Clear half of failed targets
-                failed_list = list(self.failed_targets.keys())
-                for target in failed_list[::2]:  # Clear every other target
-                    del self.failed_targets[target]
-                # Retry this method
-                return self.find_auto_target()
-            
-            if not candidates:
-                print("⚠️ No valid targets found")
-                return
-            
-            # Sort candidates by priority
-            candidates.sort(key=lambda x: x[1], reverse=True)
-            
-            # Try candidates in priority order, but validate paths
-            for target_pos, priority, target_type in candidates[:6]:  # Try top 6
-                # Check if target is safe (not too close to ghosts)
-                target_safety = self._evaluate_target_safety(target_pos, ghost_positions)
-                
-                if target_safety > 0.2:  # Lower safety threshold for more options
-                    # Validate that we can actually reach this target
-                    path, distance = self.dijkstra.shortest_path(pacman_pos, target_pos)
-                    if path and len(path) > 1:
-                        self.auto_target = target_pos
-                        if getattr(config, 'ENABLE_GHOST_AVOIDANCE_LOGGING', True):
-                            print(f"🎯 Selected {target_type} target at {target_pos} (priority: {priority:.0f}, safety: {target_safety:.2f})")
-                        self.calculate_auto_path()
-                        return
-                    else:
-                        # Mark this target as failed
-                        self.failed_targets[target_pos] = current_time
-                        if getattr(config, 'ENABLE_GHOST_AVOIDANCE_LOGGING', True):
-                            print(f"❌ No path to {target_type} at {target_pos}, marking as failed")
-            
-            # Fallback: find any safe target
-            self._find_fallback_target(pacman_pos, ghost_positions)
-            
         except Exception as e:
             print(f"❌ Error in find_auto_target: {e}")
-            # Reset to safe state
             self.auto_target = None
             self.auto_path = []
 
     def _find_dot_clusters(self):
-        """Find clusters of dots for efficient collection"""
-        if not self.dots:
-            return []
-        
-        clusters = []
-        cluster_radius = 4
-        
-        # Convert screen coordinates to maze coordinates for dots
-        maze_dots = []
-        for dot in self.dots:
-            dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
-            dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
-            maze_dots.append((dot_row, dot_col))
-        
-        # Group nearby dots into clusters
-        processed_dots = set()
-        
-        for dot in maze_dots:
-            if dot in processed_dots:
-                continue
-                
-            cluster = [dot]
-            processed_dots.add(dot)
-            
-            # Find nearby dots
-            for other_dot in maze_dots:
-                if other_dot in processed_dots:
-                    continue
-                    
-                distance = abs(dot[0] - other_dot[0]) + abs(dot[1] - other_dot[1])
-                if distance <= cluster_radius:
-                    cluster.append(other_dot)
-                    processed_dots.add(other_dot)
-            
-            if len(cluster) >= 2:  # Only consider clusters with 2+ dots
-                # Calculate cluster center
-                center_row = sum(d[0] for d in cluster) // len(cluster)
-                center_col = sum(d[1] for d in cluster) // len(cluster)
-                clusters.append(((center_row, center_col), len(cluster)))
-        
-        return clusters
+        """Find clusters of dots for efficient collection - DISABLED"""
+        # ❌ DISABLED: Không tìm clusters dots nữa
+        # if not self.dots:
+        #     return []
+        #
+        # clusters = []
+        # cluster_radius = 4
+        #
+        # # Convert screen coordinates to maze coordinates for dots
+        # maze_dots = []
+        # for dot in self.dots:
+        #     dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
+        #     dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
+        #     maze_dots.append((dot_row, dot_col))
+        #
+        # # Group nearby dots into clusters
+        # processed_dots = set()
+        #
+        # for dot in maze_dots:
+        #     if dot in processed_dots:
+        #         continue
+        #
+        #     cluster = [dot]
+        #     processed_dots.add(dot)
+        #
+        #     # Find nearby dots
+        #     for other_dot in maze_dots:
+        #         if other_dot in processed_dots:
+        #             continue
+        #
+        #     distance = abs(dot[0] - other_dot[0]) + abs(dot[1] - other_dot[1])
+        #     if distance <= cluster_radius:
+        #         cluster.append(other_dot)
+        #         processed_dots.add(other_dot)
+        #
+        #     if len(cluster) >= 2:  # Only consider clusters with 2+ dots
+        #         # Calculate cluster center
+        #         center_row = sum(d[0] for d in cluster) // len(cluster)
+        #         center_col = sum(d[1] for d in cluster) // len(cluster)
+        #         clusters.append(((center_row, center_col), len(cluster)))
+        #
+        # return clusters
+        return []  # Không có clusters nào
 
     def _evaluate_target_safety(self, target_pos, ghost_positions):
         """Evaluate how safe a target position is"""
@@ -1616,58 +1500,207 @@ class PacmanGame:
         return None
 
     def move_pacman_auto(self):
-        """Ultra simplified auto movement - no complex pathfinding"""
-        
+        """GOAL-FIRST auto movement - ƯU TIÊN TUYỆT ĐỐI ĐẾN GOAL"""
+
         # Initialize auto mode variables
         if not hasattr(self, 'current_goal'):
             self.current_goal = None
         if not hasattr(self, 'goal_locked'):
             self.goal_locked = False
-            
-        # Only find new goal if we don't have one or reached current one
-        if not self.current_goal or not self.goal_locked:
-            self.find_simple_goal()
-            self.goal_locked = True
-            
-        # Simple direct movement toward goal
-        if self.current_goal:
-            self.move_directly_toward_goal()
+        if not hasattr(self, 'goal_cooldown'):
+            self.goal_cooldown = 0
 
-    def find_simple_goal(self):
-        """Find closest goal and stick to it"""
+        # Decrease cooldown
+        if self.goal_cooldown > 0:
+            self.goal_cooldown -= 1
+
+        # CRITICAL: Only find new goal if NO current goal OR goal reached/collected
+        if not self.current_goal or not self.goal_locked:
+            if self.goal_cooldown <= 0:
+                self.find_goal_first()
+                if self.current_goal:
+                    self.goal_locked = True
+
+        # GOAL-ONLY movement - không bị phân tâm bởi dots
+        if self.current_goal:
+            self.move_goal_focused()
+
+    def find_goal_first(self):
+        """GOAL-ONLY selection - Chỉ đi đến đích, không ăn dots/pellets"""
         pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
-        
-        # Find closest target
-        best_target = None
-        best_distance = float('inf')
-        
-        # Check power pellets first
-        for pellet in self.power_pellets:
-            pellet_col = int((pellet[0] - self.cell_size // 2) / self.cell_size)
-            pellet_row = int((pellet[1] - self.cell_size // 2) / self.cell_size)
-            distance = abs(pacman_row - pellet_row) + abs(pacman_col - pellet_col)
-            
-            if distance < best_distance:
-                best_distance = distance
-                best_target = (pellet_row, pellet_col)
-        
-        # Then check dots if no power pellets
-        if not best_target and self.dots:
-            for dot in self.dots:
-                dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
-                dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
-                distance = abs(pacman_row - dot_row) + abs(pacman_col - dot_col)
-                
-                if distance < best_distance:
-                    best_distance = distance
-                    best_target = (dot_row, dot_col)
-        
-        if best_target:
-            self.current_goal = best_target
-            print(f"🎯 LOCKED Goal: {best_target} (distance: {best_distance})")
+
+        # STRATEGY: Chỉ tập trung vào goal, không ăn dots/pellets
+        # Ưu tiên: Exit gate ONLY
+
+        # 1. EXIT GATE ONLY - Chỉ đi đến exit gate
+        if hasattr(self, 'exit_gate'):
+            self.current_goal = self.exit_gate
+            print(f"🎯 GOAL-ONLY: Exit gate at {self.exit_gate}")
+            return
+
+        # 2. Nếu không có exit gate, tạo goal cố định ở góc đối diện
+        if not hasattr(self, 'exit_gate'):
+            # Tạo exit gate ở góc đối diện
+            center_row = self.maze_gen.height // 2
+            center_col = self.maze_gen.width // 2
+
+            # Tìm vị trí hợp lệ ở góc dưới phải
+            for dr in range(-5, 6):
+                for dc in range(-5, 6):
+                    test_row = self.maze_gen.height - 1 + dr
+                    test_col = self.maze_gen.width - 1 + dc
+
+                    if (0 <= test_row < self.maze_gen.height and
+                        0 <= test_col < self.maze_gen.width and
+                        self.maze[test_row, test_col] == 0):  # Valid path
+                        self.exit_gate = (test_row, test_col)
+                        self.current_goal = self.exit_gate
+                        print(f"🎯 GOAL-ONLY: Created exit gate at {self.exit_gate}")
+                        return
+
+        # 3. Fallback: goal ở center nếu không tìm được gì
+        center_row = self.maze_gen.height // 2
+        center_col = self.maze_gen.width // 2
+        if self.is_valid_position(center_col, center_row):
+            self.current_goal = (center_row, center_col)
+            print(f"🎯 GOAL-ONLY: Center goal at {self.current_goal}")
         else:
             self.current_goal = None
-            print("❌ No goals available")
+            print("❌ GOAL-ONLY: No valid goal found")
+
+    def move_goal_focused(self):
+        """GOAL-FOCUSED movement - Chỉ tập trung vào goal, không ăn dots ngẫu nhiên"""
+        if not self.current_goal:
+            return
+
+        goal_row, goal_col = self.current_goal
+        pacman_col, pacman_row = int(round(self.pacman_pos[0])), int(round(self.pacman_pos[1]))
+
+        # Check if goal reached
+        distance_to_goal = abs(pacman_row - goal_row) + abs(pacman_col - goal_col)
+        if distance_to_goal < 1:
+            print(f"🎯 GOAL REACHED! Distance: {distance_to_goal}")
+            self.goal_locked = False
+            self.current_goal = None
+            self.goal_cooldown = 10  # Short cooldown before next goal
+            return
+
+        # GOAL-ONLY pathfinding - không bị phân tâm
+        direction = self.find_goal_path((pacman_col, pacman_row), (goal_col, goal_row))
+
+        if direction:
+            self.pacman_next_direction = direction
+        else:
+            # Emergency: move toward goal directly
+            self.emergency_goal_move(pacman_col, pacman_row, goal_col, goal_row)
+
+    def find_goal_path(self, start_pos, goal_pos):
+        """GOAL-ONLY pathfinding - tối ưu cho việc đi đến goal"""
+        import heapq
+
+        start = (int(start_pos[0]), int(start_pos[1]))
+        goal = goal_pos
+
+        if start == goal:
+            return None
+
+        def heuristic(pos):
+            """Manhattan distance - khuyến khích đi thẳng đến goal"""
+            return abs(pos[0] - goal[0]) + abs(pos[1] - goal[1])
+
+        # A* algorithm với goal priority
+        heap = [(heuristic(start), 0, start, [])]
+        visited = set()
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+
+        while heap:
+            f_score, g_score, (x, y), path = heapq.heappop(heap)
+
+            if (x, y) in visited:
+                continue
+            visited.add((x, y))
+
+            for dx, dy in directions:
+                nx, ny = x + dx, y + dy
+
+                if (nx, ny) == goal:
+                    # GOAL FOUND - return first step
+                    first_step = path[0] if path else (dx, dy)
+                    return [first_step[0], first_step[1]]
+
+                if (nx, ny) not in visited and self.is_valid_position(nx, ny):
+                    new_g_score = g_score + 1
+                    new_f_score = new_g_score + heuristic((nx, ny))
+                    new_path = path + [(dx, dy)]
+
+                    heapq.heappush(heap, (new_f_score, new_g_score, (nx, ny), new_path))
+
+        return None
+
+    def emergency_goal_move(self, px, py, gx, gy):
+        """Emergency movement trực tiếp đến goal"""
+        dx = 1 if gx > px else (-1 if gx < px else 0)
+        dy = 1 if gy > py else (-1 if gy < py else 0)
+
+        # Thử hướng chính trước
+        if dx != 0 and self.is_valid_position(px + dx, py):
+            self.pacman_next_direction = [dx, 0]
+            return
+        elif dy != 0 and self.is_valid_position(px, py + dy):
+            self.pacman_next_direction = [0, dy]
+            return
+
+        # Thử hướng phụ
+        if dy != 0 and self.is_valid_position(px + dy, py):
+            self.pacman_next_direction = [dy, 0]
+            return
+        elif dx != 0 and self.is_valid_position(px, py + dx):
+            self.pacman_next_direction = [0, dx]
+            return
+
+        # Last resort: bất kỳ hướng nào
+        for test_dir in [[1,0], [-1,0], [0,1], [0,-1]]:
+            if self.is_valid_position(px + test_dir[0], py + test_dir[1]):
+                self.pacman_next_direction = test_dir
+                return
+
+    def find_simple_goal(self):
+        """Find closest goal and stick to it - CHỈ TÌM EXIT GATE"""
+        pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
+
+        # ❌ DISABLED: Không tìm power pellets và dots nữa
+        # # Find closest target
+        # best_target = None
+        # best_distance = float('inf')
+        #
+        # # Check power pellets first
+        # for pellet in self.power_pellets:
+        #     pellet_col = int((pellet[0] - self.cell_size // 2) / self.cell_size)
+        #     pellet_row = int((pellet[1] - self.cell_size // 2) / self.cell_size)
+        #     distance = abs(pacman_row - pellet_row) + abs(pacman_col - pellet_col)
+        #
+        #     if distance < best_distance:
+        #         best_distance = distance
+        #         best_target = (pellet_row, pellet_col)
+        #
+        # # Then check dots if no power pellets
+        # if not best_target and self.dots:
+        #     for dot in self.dots:
+        #         dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
+        #         dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
+        #         distance = abs(pacman_row - dot_row) + abs(pacman_col - dot_col)
+        #
+        #     if distance < best_distance:
+        #         best_distance = distance
+        #         best_target = (dot_row, dot_col)
+
+        # ✅ CHỈ TÌM EXIT GATE
+        if hasattr(self, 'exit_gate') and self.exit_gate:
+            self.current_goal = self.exit_gate
+            print(f"🎯 LOCKED Goal: {self.exit_gate} (EXIT GATE ONLY)")
+        else:
+            self.current_goal = None
+            print("❌ No exit gate available")
 
     def find_path_to_goal(self, start_pos, goal_pos):
         """Tìm đường đi tối ưu đến goal với ghost avoidance thông minh"""
@@ -1767,94 +1800,70 @@ class PacmanGame:
                     break
 
     def find_optimal_goal(self):
-        """Find the best goal (power pellet > dots > exit) - stick to one goal"""
+        """Find the best goal - CHỈ TÌM EXIT GATE"""
         pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
         pacman_pos = (pacman_row, pacman_col)
-        
-        # Check if current goal is still valid before switching
-        if self.current_goal:
-            goal_row, goal_col = self.current_goal
-            goal_screen_pos = (goal_col * self.cell_size + self.cell_size // 2,
-                              goal_row * self.cell_size + self.cell_size // 2)
-            
-            # If current goal still exists, keep it
-            if (goal_screen_pos in self.dots or goal_screen_pos in self.power_pellets):
-                print(f"🎯 Keeping current goal at {self.current_goal}")
-                return
-        
-        # Priority 1: Power pellets when ghosts are nearby or when found
-        if self.power_pellets:
-            # Find closest power pellet
-            best_pellet = None
-            best_distance = float('inf')
-            
-            for pellet in self.power_pellets:
-                pellet_col = int((pellet[0] - self.cell_size // 2) / self.cell_size)
-                pellet_row = int((pellet[1] - self.cell_size // 2) / self.cell_size)
-                distance = abs(pacman_row - pellet_row) + abs(pacman_col - pellet_col)
-                
-                if distance < best_distance:
-                    best_distance = distance
-                    best_pellet = (pellet_row, pellet_col)
-            
-            if best_pellet:
-                self.current_goal = best_pellet
-                print(f"🎯 NEW Goal: Power pellet at {best_pellet}")
-                return
-        
-        # Priority 2: Nearest dots (find closest one and stick to it)
-        if self.dots:
-            best_dot = None
-            best_distance = float('inf')
-            
-            for dot in self.dots:
-                dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
-                dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
-                distance = abs(pacman_row - dot_row) + abs(pacman_col - dot_col)
-                
-                if distance < best_distance:
-                    best_distance = distance
-                    best_dot = (dot_row, dot_col)
-            
-            if best_dot:
-                self.current_goal = best_dot
-                print(f"🎯 NEW Goal: Dot at {best_dot}")
-                return
-        
-        # Priority 3: Exit gate (if no dots left)
-        if hasattr(self, 'exit_gate'):
+
+        # ❌ DISABLED: Không kiểm tra dots/pellets nữa
+        # # Check if current goal is still valid before switching
+        # if self.current_goal:
+        #     goal_row, goal_col = self.current_goal
+        #     goal_screen_pos = (goal_col * self.cell_size + self.cell_size // 2,
+        #                       goal_row * self.cell_size + self.cell_size // 2)
+        #
+        #     # If current goal still exists, keep it
+        #     if (goal_screen_pos in self.dots or goal_screen_pos in self.power_pellets):
+        #         print(f"🎯 Keeping current goal at {self.current_goal}")
+        #         return
+
+        # ❌ DISABLED: Không tìm power pellets nữa
+        # # Priority 1: Power pellets when ghosts are nearby or when found
+        # if self.power_pellets:
+        #     # Find closest power pellet
+        #     best_pellet = None
+        #     best_distance = float('inf')
+        #
+        #     for pellet in self.power_pellets:
+        #         pellet_col = int((pellet[0] - self.cell_size // 2) / self.cell_size)
+        #         pellet_row = int((pellet[1] - self.cell_size // 2) / self.cell_size)
+        #         distance = abs(pacman_row - pellet_row) + abs(pacman_col - pellet_col)
+        #
+        #         if distance < best_distance:
+        #             best_distance = distance
+        #             best_pellet = (pellet_row, pellet_col)
+        #
+        #     if best_pellet:
+        #         self.current_goal = best_pellet
+        #         print(f"🎯 NEW Goal: Power pellet at {best_pellet}")
+        #         return
+
+        # ❌ DISABLED: Không tìm dots nữa
+        # # Priority 2: Nearest dots (find closest one and stick to it)
+        # if self.dots:
+        #     best_dot = None
+        #     best_distance = float('inf')
+        #
+        #     for dot in self.dots:
+        #         dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
+        #         dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
+        #         distance = abs(pacman_row - dot_row) + abs(pacman_col - dot_col)
+        #
+        #         if distance < best_distance:
+        #             best_distance = distance
+        #             best_dot = (dot_row, dot_col)
+        #
+        #     if best_dot:
+        #         self.current_goal = best_dot
+        #         print(f"🎯 NEW Goal: Dot at {best_dot}")
+        #         return
+
+        # ✅ CHỈ TÌM EXIT GATE
+        if hasattr(self, 'exit_gate') and self.exit_gate:
             self.current_goal = self.exit_gate
-            print(f"🎯 NEW Goal: Exit gate at {self.exit_gate}")
+            print(f"🎯 GOAL: Exit gate at {self.exit_gate}")
         else:
             self.current_goal = None
-            print("❌ No goals found!")
-        
-        # Priority 2: Nearest dots (find closest one and stick to it)
-        if self.dots:
-            best_dot = None
-            best_distance = float('inf')
-            
-            for dot in self.dots:
-                dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
-                dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
-                distance = abs(pacman_row - dot_row) + abs(pacman_col - dot_col)
-                
-                if distance < best_distance:
-                    best_distance = distance
-                    best_dot = (dot_row, dot_col)
-            
-            if best_dot:
-                self.current_goal = best_dot
-                print(f"🎯 NEW Goal: Dot at {best_dot}")
-                return
-        
-        # Priority 3: Exit gate (if no dots left)
-        if hasattr(self, 'exit_gate'):
-            self.current_goal = self.exit_gate
-            print(f"🎯 NEW Goal: Exit gate at {self.exit_gate}")
-        else:
-            self.current_goal = None
-            print("❌ No goals found!")
+            print("❌ No exit gate found!")
 
     def calculate_path_to_goal(self):
         """Calculate shortest path to current goal"""
@@ -1963,7 +1972,7 @@ class PacmanGame:
                 self.path_to_goal.pop(0)
 
     def has_reached_current_goal(self):
-        """Check if current goal has been reached or is no longer valid"""
+        """Check if current goal has been reached - CHỈ KIỂM TRA ĐẾN GOAL"""
         if not self.current_goal:
             return True
         
@@ -1974,13 +1983,17 @@ class PacmanGame:
         if abs(pacman_col - goal_col) < 1 and abs(pacman_row - goal_row) < 1:
             return True
         
-        # Check if goal is still valid (dot/pellet still exists)
-        goal_screen_pos = (goal_col * self.cell_size + self.cell_size // 2,
-                          goal_row * self.cell_size + self.cell_size // 2)
+        # ❌ DISABLED: Không kiểm tra dots/pellets nữa
+        # # Check if goal is still valid (dot/pellet still exists)
+        # goal_screen_pos = (goal_col * self.cell_size + self.cell_size // 2,
+        #                   goal_row * self.cell_size + self.cell_size // 2)
+        #
+        # # Check if it's still in dots or power_pellets
+        # return (goal_screen_pos not in self.dots and 
+        #         goal_screen_pos not in self.power_pellets)
         
-        # Check if it's still in dots or power_pellets
-        return (goal_screen_pos not in self.dots and 
-                goal_screen_pos not in self.power_pellets)
+        # Goal luôn valid vì chỉ đi đến exit gate
+        return False
 
     def has_reached_target(self):
         """Check if Pacman has reached the current auto target"""
@@ -2026,7 +2039,7 @@ class PacmanGame:
         return self.maze[check_row, check_col] == 0
 
     def check_collisions(self):
-        """Check collisions with dots, pellets, and ghosts"""
+        """Check collisions with ghosts ONLY - không ăn dots/pellets"""
         pacman_center = (self.pacman_pos[0] * self.cell_size + self.cell_size // 2,
                         self.pacman_pos[1] * self.cell_size + self.cell_size // 2)
 
@@ -2043,17 +2056,17 @@ class PacmanGame:
             if distance < 10:
                 self.power_pellets.remove(pellet)
                 self.score += 50
-                
+
                 # Set power mode for 10 seconds
                 self.power_mode_end_time = pygame.time.get_ticks() + 10000  # 10 seconds
                 print("💪 Power mode activated! Ghosts can be eaten for 10 seconds")
-                
+
                 # Make all ghosts frightened for 10 seconds
                 for ghost in self.ghosts:
                     ghost['scared'] = True
                     ghost['scared_timer'] = 600  # 10 seconds at 60 FPS
 
-        # Check ghosts
+        # ✅ CHỈ KIỂM TRA: Ghosts collision
         for ghost in self.ghosts:
             ghost_center = (ghost['pos'][0] * self.cell_size + self.cell_size // 2,
                           ghost['pos'][1] * self.cell_size + self.cell_size // 2)
