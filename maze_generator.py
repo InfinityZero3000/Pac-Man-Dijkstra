@@ -89,6 +89,12 @@ class MazeGenerator:
             return self.maze[x, y] == 1
         return True
 
+    def is_valid_position(self, row, col):
+        """Check if position is valid (within bounds and not a wall)"""
+        if 0 <= row < self.height and 0 <= col < self.width:
+            return self.maze[row, col] == 0  # 0 means open space
+        return False
+
     def get_neighbors(self, position):
         x, y = position
         neighbors = []

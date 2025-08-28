@@ -4,6 +4,7 @@ import random
 import math
 from maze_generator import MazeGenerator
 from dijkstra_algorithm import DijkstraAlgorithm
+import config
 
 class PacmanGame:
     def __init__(self, width=51, height=41, cell_size=23):
@@ -47,7 +48,7 @@ class PacmanGame:
         self.pacman_direction = [0, 0]
         self.pacman_next_direction = [0, 0]
         self.pacman_speed = 2
-        self.pacman_animation = 0
+        self.pacman_animation = 1
         self.pacman_mouth_open = True
 
         # Generate maze
@@ -442,11 +443,11 @@ class PacmanGame:
 
         # Instructions
         if self.game_state == "playing":
-            mode_text = "🤖 AUTO" if self.auto_mode else "🎮 MANUAL"
+            mode_text = "AUTO" if self.auto_mode else "MANUAL"
             
             # Show ghost modes
             ghost_modes = [f"{g['name'][:1]}:{g['mode'][:3]}" for g in self.ghosts[:2]]  # Show first 2 ghosts
-            ghost_info = f"👻 {' '.join(ghost_modes)}"
+            ghost_info = f" {' '.join(ghost_modes)}"
             
             inst_text = self.font.render(f"{mode_text} | {ghost_info} | Arrow Keys: Move | A: Auto | E: Escape to Exit | H: Show Path | P: Pause | R: Restart", True, self.YELLOW)
             self.screen.blit(inst_text, (10, ui_y + 30))
@@ -1048,262 +1049,948 @@ class PacmanGame:
         if hasattr(self, 'exit_gate'):
             self.auto_target = self.exit_gate
             self.calculate_auto_path()
-            print("🚪 Escape mode: Heading to exit gate!")
+            print(" Escape mode: Heading to exit gate!")
         else:
-            print("❌ No exit gate found!")
+            print(" No exit gate found!")
 
     def find_auto_target(self):
-        """Find the best target for Pacman with improved strategy - prioritize exit gate"""
-        pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
-        pacman_pos = (pacman_row, pacman_col)
+        """Find the best target for Pacman using intelligent prioritization with stuck avoidance"""
+        try:
+            pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
+            pacman_pos = (pacman_row, pacman_col)
 
-        # Get ghost positions for avoidance
-        ghost_positions = [(int(g['pos'][1]), int(g['pos'][0])) for g in self.ghosts]
+            # Get ghost positions for avoidance
+            ghost_positions = [(int(g['pos'][1]), int(g['pos'][0])) for g in self.ghosts]
 
-        # If no dots or pellets left, go to exit gate
-        if not self.dots and not self.power_pellets:
-            if hasattr(self, 'exit_gate'):
-                self.auto_target = self.exit_gate
-                self.calculate_auto_path()
-                return
+            # Track failed targets to avoid repeatedly selecting them
+            if not hasattr(self, 'failed_targets'):
+                self.failed_targets = {}
+            
+            # Clean old failed targets (older than 10 seconds)
+            current_time = pygame.time.get_ticks()
+            self.failed_targets = {
+                target: time for target, time in self.failed_targets.items()
+                if current_time - time < 10000
+            }
 
-        # Get distance to exit gate for comparison
-        exit_distance = float('inf')
-        if hasattr(self, 'exit_gate'):
-            path_to_exit, exit_dist = self.dijkstra.shortest_path(pacman_pos, self.exit_gate)
-            if path_to_exit:
-                exit_distance = exit_dist
+            # If no dots or pellets left, go to exit gate
+            if not self.dots and not self.power_pellets:
+                if hasattr(self, 'exit_gate'):
+                    self.auto_target = self.exit_gate
+                    self.calculate_auto_path()
+                    return
 
-        # Find nearest safe power pellet first (higher priority)
-        if self.power_pellets:
-            best_pellet = None
-            best_score = float('-inf')
-
+            # Strategic target selection based on game state
+            candidates = []
+            
+            # Power pellets - highest priority when ghosts are near
+            min_ghost_distance = float('inf')
+            if ghost_positions:
+                min_ghost_distance = min(
+                    abs(pacman_row - g_pos[0]) + abs(pacman_col - g_pos[1])
+                    for g_pos in ghost_positions
+                )
+            
+            # Add power pellets as candidates
             for pellet in self.power_pellets:
                 # Convert screen coordinates to maze coordinates
                 pellet_col = int((pellet[0] - self.cell_size // 2) / self.cell_size)
                 pellet_row = int((pellet[1] - self.cell_size // 2) / self.cell_size)
                 pellet_pos = (pellet_row, pellet_col)
-
-                # Calculate safety score (distance from ghosts)
-                safety_score = min([abs(pellet_row - gr) + abs(pellet_col - gc) 
-                                  for gr, gc in ghost_positions]) if ghost_positions else 10
-
-                # Calculate path distance
-                path, distance = self.dijkstra.shortest_path(pacman_pos, pellet_pos)
-                if path and distance > 0:
-                    # Consider distance to exit gate after eating pellet
-                    total_distance = distance + exit_distance
+                
+                # Skip if this target has failed recently
+                if pellet_pos in self.failed_targets:
+                    continue
+                
+                distance = abs(pacman_row - pellet_row) + abs(pacman_col - pellet_col)
+                
+                # High priority if ghosts are close
+                if min_ghost_distance <= 5:
+                    priority = 1000 - distance  # Very high priority
+                else:
+                    priority = 500 - distance  # Medium priority
+                
+                candidates.append((pellet_pos, priority, 'power_pellet'))
+            
+            # Add nearby dots with cluster bonus
+            dot_clusters = self._find_dot_clusters()
+            for cluster_center, cluster_size in dot_clusters:
+                # Skip if this target has failed recently
+                if cluster_center in self.failed_targets:
+                    continue
                     
-                    # Score = safety / total_distance (prefer safe pellets that lead to exit)
-                    score = safety_score / total_distance
-                    if score > best_score:
-                        best_score = score
-                        best_pellet = pellet_pos
-
-            if best_pellet:
-                self.auto_target = best_pellet
-                self.calculate_auto_path()
-                return
-
-        # Find best dot using improved strategy
-        if self.dots:
-            best_dot = None
-            best_score = float('-inf')
-
-            # Consider multiple dots and choose the best one
-            for dot in self.dots[:30]:  # Limit to first 30 for performance
+                distance = abs(pacman_row - cluster_center[0]) + abs(pacman_col - cluster_center[1])
+                
+                # Higher priority for larger clusters, but not if too far
+                if distance <= 20:  # Only consider reasonably close clusters
+                    cluster_bonus = cluster_size * 15
+                    priority = 400 + cluster_bonus - distance
+                    candidates.append((cluster_center, priority, 'dot_cluster'))
+            
+            # Add individual nearby dots
+            dots_to_check = self.dots[:15]  # Limit for performance
+            for dot in dots_to_check:
                 # Convert screen coordinates to maze coordinates
                 dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
                 dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
                 dot_pos = (dot_row, dot_col)
+                
+                # Skip if this target has failed recently
+                if dot_pos in self.failed_targets:
+                    continue
+                
+                distance = abs(pacman_row - dot_row) + abs(pacman_col - dot_col)
+                
+                # Only consider nearby dots
+                if distance <= 12:
+                    priority = 250 - distance
+                    candidates.append((dot_pos, priority, 'dot'))
+            
+            # If no good candidates (all targets have failed recently), force retry some targets
+            if not candidates and self.failed_targets:
+                print("🔄 All targets failed recently, retrying...")
+                # Clear half of failed targets
+                failed_list = list(self.failed_targets.keys())
+                for target in failed_list[::2]:  # Clear every other target
+                    del self.failed_targets[target]
+                # Retry this method
+                return self.find_auto_target()
+            
+            if not candidates:
+                print("⚠️ No valid targets found")
+                return
+            
+            # Sort candidates by priority
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            
+            # Try candidates in priority order, but validate paths
+            for target_pos, priority, target_type in candidates[:6]:  # Try top 6
+                # Check if target is safe (not too close to ghosts)
+                target_safety = self._evaluate_target_safety(target_pos, ghost_positions)
+                
+                if target_safety > 0.2:  # Lower safety threshold for more options
+                    # Validate that we can actually reach this target
+                    path, distance = self.dijkstra.shortest_path(pacman_pos, target_pos)
+                    if path and len(path) > 1:
+                        self.auto_target = target_pos
+                        if getattr(config, 'ENABLE_GHOST_AVOIDANCE_LOGGING', True):
+                            print(f"🎯 Selected {target_type} target at {target_pos} (priority: {priority:.0f}, safety: {target_safety:.2f})")
+                        self.calculate_auto_path()
+                        return
+                    else:
+                        # Mark this target as failed
+                        self.failed_targets[target_pos] = current_time
+                        if getattr(config, 'ENABLE_GHOST_AVOIDANCE_LOGGING', True):
+                            print(f"❌ No path to {target_type} at {target_pos}, marking as failed")
+            
+            # Fallback: find any safe target
+            self._find_fallback_target(pacman_pos, ghost_positions)
+            
+        except Exception as e:
+            print(f"❌ Error in find_auto_target: {e}")
+            # Reset to safe state
+            self.auto_target = None
+            self.auto_path = []
 
-                # Calculate safety score (distance from ghosts)
-                safety_score = min([abs(dot_row - gr) + abs(dot_col - gc) 
-                                  for gr, gc in ghost_positions]) if ghost_positions else 10
-
-                # Calculate path distance
-                path, distance = self.dijkstra.shortest_path(pacman_pos, dot_pos)
-                if path and distance > 0:
-                    # Consider distance to exit gate after eating dot
-                    total_distance = distance + exit_distance
+    def _find_dot_clusters(self):
+        """Find clusters of dots for efficient collection"""
+        if not self.dots:
+            return []
+        
+        clusters = []
+        cluster_radius = 4
+        
+        # Convert screen coordinates to maze coordinates for dots
+        maze_dots = []
+        for dot in self.dots:
+            dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
+            dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
+            maze_dots.append((dot_row, dot_col))
+        
+        # Group nearby dots into clusters
+        processed_dots = set()
+        
+        for dot in maze_dots:
+            if dot in processed_dots:
+                continue
+                
+            cluster = [dot]
+            processed_dots.add(dot)
+            
+            # Find nearby dots
+            for other_dot in maze_dots:
+                if other_dot in processed_dots:
+                    continue
                     
-                    # Improved scoring: prefer safe, close targets that lead to exit
-                    score = (safety_score * 2) / total_distance  # Weight safety more
-                    if score > best_score:
-                        best_score = score
-                        best_dot = dot_pos
+                distance = abs(dot[0] - other_dot[0]) + abs(dot[1] - other_dot[1])
+                if distance <= cluster_radius:
+                    cluster.append(other_dot)
+                    processed_dots.add(other_dot)
+            
+            if len(cluster) >= 2:  # Only consider clusters with 2+ dots
+                # Calculate cluster center
+                center_row = sum(d[0] for d in cluster) // len(cluster)
+                center_col = sum(d[1] for d in cluster) // len(cluster)
+                clusters.append(((center_row, center_col), len(cluster)))
+        
+        return clusters
 
-            if best_dot:
-                self.auto_target = best_dot
-                self.calculate_auto_path()
+    def _evaluate_target_safety(self, target_pos, ghost_positions):
+        """Evaluate how safe a target position is"""
+        if not ghost_positions:
+            return 1.0  # Completely safe if no ghosts
+        
+        min_ghost_dist = min(
+            abs(target_pos[0] - g_pos[0]) + abs(target_pos[1] - g_pos[1])
+            for g_pos in ghost_positions
+        )
+        
+        # Convert distance to safety score (0.0 to 1.0)
+        if min_ghost_dist >= 8:
+            return 1.0  # Very safe
+        elif min_ghost_dist >= 5:
+            return 0.7  # Safe
+        elif min_ghost_dist >= 3:
+            return 0.4  # Moderate risk
+        else:
+            return 0.1  # High risk
+
+    def _find_fallback_target(self, pacman_pos, ghost_positions):
+        """Find a safe fallback target when primary targets are unsafe"""
+        try:
+            directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # right, left, down, up
+            search_radius = 8
+            
+            # Find safe positions in expanding radius
+            for radius in range(1, search_radius + 1):
+                safe_positions = []
+                
+                for dr in range(-radius, radius + 1):
+                    for dc in range(-radius, radius + 1):
+                        if abs(dr) + abs(dc) != radius:  # Only check positions at exact radius
+                            continue
+                            
+                        new_pos = (pacman_pos[0] + dr, pacman_pos[1] + dc)
+                        
+                        # Check if position is valid
+                        if (new_pos[0] >= 0 and new_pos[0] < len(self.maze_gen.maze) and
+                            new_pos[1] >= 0 and new_pos[1] < len(self.maze_gen.maze[0]) and
+                            self.maze_gen.maze[new_pos[0]][new_pos[1]] == 0):
+                            
+                            # Check safety from ghosts
+                            min_ghost_dist = min([abs(new_pos[0] - gr) + abs(new_pos[1] - gc) 
+                                                for gr, gc in ghost_positions]) if ghost_positions else 10
+                            
+                            if min_ghost_dist >= 3:  # Safe distance
+                                path, distance = self.dijkstra.shortest_path(pacman_pos, new_pos)
+                                if path:
+                                    safe_positions.append((new_pos, min_ghost_dist, distance))
+                
+                # Choose best safe position from this radius
+                if safe_positions:
+                    # Sort by safety first, then by path distance
+                    safe_positions.sort(key=lambda x: (-x[1], x[2]))
+                    best_pos = safe_positions[0][0]
+                    
+                    self.auto_target = best_pos
+                    print(f"🆘 Using fallback target at {best_pos} (safety: {safe_positions[0][1]})")
+                    self.calculate_auto_path()
+                    return
+            
+            # Emergency: try to move away from nearest ghost
+            if ghost_positions:
+                nearest_ghost = min(ghost_positions, 
+                                  key=lambda g: abs(pacman_pos[0] - g[0]) + abs(pacman_pos[1] - g[1]))
+                
+                # Move in opposite direction from nearest ghost
+                escape_directions = []
+                if nearest_ghost[0] > pacman_pos[0]:  # Ghost below, move up
+                    escape_directions.append((-1, 0))
+                elif nearest_ghost[0] < pacman_pos[0]:  # Ghost above, move down
+                    escape_directions.append((1, 0))
+                
+                if nearest_ghost[1] > pacman_pos[1]:  # Ghost right, move left
+                    escape_directions.append((0, -1))
+                elif nearest_ghost[1] < pacman_pos[1]:  # Ghost left, move right
+                    escape_directions.append((0, 1))
+                
+                for dr, dc in escape_directions:
+                    escape_pos = (pacman_pos[0] + dr, pacman_pos[1] + dc)
+                    if (escape_pos[0] >= 0 and escape_pos[0] < len(self.maze_gen.maze) and
+                        escape_pos[1] >= 0 and escape_pos[1] < len(self.maze_gen.maze[0]) and
+                        self.maze_gen.maze[escape_pos[0]][escape_pos[1]] == 0):
+                        
+                        self.auto_target = escape_pos
+                        print(f"🚨 Emergency escape to {escape_pos}")
+                        self.calculate_auto_path()
+                        return
+            
+            # Last resort: stay in place but keep looking
+            print("⚠️ No safe escape found, staying vigilant")
+            self.auto_target = pacman_pos
+            self.auto_path = [pacman_pos]
+            
+        except Exception as e:
+            print(f"❌ Error in fallback target search: {e}")
+            self.auto_target = pacman_pos
+            self.auto_path = [pacman_pos]
 
     def calculate_auto_path(self):
-        """Calculate optimized path to target while intelligently avoiding ghosts"""
         if not self.auto_target:
             return
 
         pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
         pacman_pos = (pacman_row, pacman_col)
 
-        # Get ghost positions and their predicted future positions
-        ghost_danger_zones = set()
-        for ghost in self.ghosts:
-            ghost_col, ghost_row = int(ghost['pos'][0]), int(ghost['pos'][1])
-            ghost_pos = (ghost_row, ghost_col)
+        # Get ghost positions for advanced pathfinding
+        ghost_positions = [(int(g['pos'][1]), int(g['pos'][0])) for g in self.ghosts]
+        
+        # Get other game state information for multi-objective pathfinding
+        dots_positions = []
+        power_pellet_positions = []
+        
+        # Use maze_gen to access maze data since self.maze structure varies
+        for row in range(self.maze_gen.height):
+            for col in range(self.maze_gen.width):
+                cell_value = self.maze[row][col] if hasattr(self.maze, '__getitem__') else 0
+                if cell_value == 1:  # Dot
+                    dots_positions.append((row, col))
+                elif cell_value == 4:  # Power pellet
+                    power_pellet_positions.append((row, col))
+        
+        # Create objectives list with current target
+        objectives = [self.auto_target]
+        
+        # Try advanced multi-objective pathfinding with nested algorithms
+        try:
+            advanced_path, advanced_distance = self.dijkstra.advanced_pathfinding_with_multi_objectives(
+                pacman_pos, 
+                objectives, 
+                ghost_positions,
+                ghost_velocities=None,  # Could be enhanced with ghost velocity tracking
+                power_pellet_positions=power_pellet_positions,
+                dots_positions=dots_positions,
+                exit_gate=None,  # Could be used for specific game modes
+                enable_logging=True
+            )
             
-            # Mark danger zone around each ghost (larger radius for safety)
-            for dr in range(-4, 5):
-                for dc in range(-4, 5):
-                    if abs(dr) + abs(dc) <= 4:  # Manhattan distance <= 4
-                        danger_row, danger_col = ghost_row + dr, ghost_col + dc
-                        if (0 <= danger_row < self.maze_gen.height and 
-                            0 <= danger_col < self.maze_gen.width):
-                            ghost_danger_zones.add((danger_row, danger_col))
+            if advanced_path and advanced_distance < float('inf'):
+                # Validate and use the advanced path
+                if self._validate_path_safety(advanced_path, ghost_positions):
+                    self.auto_path = advanced_path
+                    self.auto_path_index = 0
+                    self.last_auto_update = pygame.time.get_ticks()
+                    print(f"🧠 Advanced pathfinding success: {len(advanced_path)-1} steps, safety validated")
+                    return
+        except Exception as e:
+            print(f"⚠️ Advanced pathfinding failed: {e}")
 
-        # Find primary path
-        path, distance = self.dijkstra.shortest_path(pacman_pos, self.auto_target)
+        # Fallback: Dual Algorithm Approach (Ghost Avoidance + Normal Path)
+        avoidance_radius = getattr(config, 'GHOST_AVOIDANCE_RADIUS', 4)
+        
+        # Algorithm 1: Path with ghost avoidance
+        path_with_avoidance, distance_with_avoidance = self.dijkstra.shortest_path_with_ghost_avoidance(
+            pacman_pos, self.auto_target, ghost_positions, avoidance_radius, enable_logging=False
+        )
 
-        if path:
-            # Create smart filtered path
-            smart_path = []
-            skip_count = 0
+        # Algorithm 2: Normal shortest path
+        path_normal, distance_normal = self.dijkstra.shortest_path(
+            pacman_pos, self.auto_target, enable_logging=False
+        )
+
+        # Choose the best path using intelligent criteria
+        best_path = None
+        best_distance = float('inf')
+        chosen_algorithm = "none"
+
+        # Evaluate path with avoidance
+        if path_with_avoidance and distance_with_avoidance < float('inf'):
+            # Check if path is safe using configurable threshold
+            is_safe = self._evaluate_path_safety(path_with_avoidance, ghost_positions, avoidance_radius)
             
-            for i, pos in enumerate(path):
-                pos_row, pos_col = pos
+            if is_safe:
+                best_path = path_with_avoidance
+                best_distance = distance_with_avoidance
+                chosen_algorithm = "ghost_avoidance"
+            elif getattr(config, 'ALLOW_RISKY_PATHS', True):
+                # Path exists but not safe, use it only if much shorter than normal path
+                safety_penalty = self._calculate_path_safety_penalty(path_with_avoidance, ghost_positions, avoidance_radius)
+                adjusted_distance = distance_with_avoidance + safety_penalty
+                risky_threshold = getattr(config, 'RISKY_PATH_THRESHOLD', 1.5)
                 
-                # Check if position is in danger zone
-                if pos in ghost_danger_zones:
-                    skip_count += 1
-                    # If too many dangerous positions, force a different route
-                    if skip_count > 3:
-                        # Try to find alternative safe positions nearby
-                        safe_alternatives = []
-                        for dr in [-1, 0, 1]:
-                            for dc in [-1, 0, 1]:
-                                alt_row, alt_col = pos_row + dr, pos_col + dc
-                                alt_pos = (alt_row, alt_col)
-                                if (alt_pos not in ghost_danger_zones and
-                                    not self.is_wall(alt_col, alt_row) and
-                                    0 <= alt_row < self.maze_gen.height and
-                                    0 <= alt_col < self.maze_gen.width):
-                                    safe_alternatives.append(alt_pos)
-                        
-                        if safe_alternatives:
-                            smart_path.append(safe_alternatives[0])
-                        skip_count = 0
-                else:
-                    smart_path.append(pos)
-                    skip_count = 0
+                if path_normal and distance_normal < float('inf'):
+                    if adjusted_distance < distance_normal * risky_threshold:
+                        best_path = path_with_avoidance
+                        best_distance = distance_with_avoidance
+                        chosen_algorithm = "ghost_avoidance_with_risk"
 
-            # If we have a reasonable safe path, use it
-            if len(smart_path) >= max(3, len(path) // 3):
-                self.auto_path = smart_path[1:]  # Remove starting position
-            else:
-                # If path is too dangerous, find nearest safe position first
-                safe_positions = []
-                for y in range(max(0, pacman_row - 5), min(self.maze_gen.height, pacman_row + 6)):
-                    for x in range(max(0, pacman_col - 5), min(self.maze_gen.width, pacman_col + 6)):
-                        test_pos = (y, x)
-                        if (test_pos not in ghost_danger_zones and 
-                            not self.is_wall(x, y)):
-                            safe_positions.append(test_pos)
-                
-                if safe_positions:
-                    # Go to nearest safe position first
-                    nearest_safe = min(safe_positions, 
-                                     key=lambda p: abs(p[0] - pacman_row) + abs(p[1] - pacman_col))
-                    safe_path, _ = self.dijkstra.shortest_path(pacman_pos, nearest_safe)
-                    self.auto_path = safe_path[1:] if safe_path else []
-                else:
-                    # Last resort: use original path but move carefully
-                    self.auto_path = path[1:3]  # Only next 2 steps
+        # Evaluate normal path if no good avoidance path found
+        if not best_path and path_normal and distance_normal < float('inf'):
+            best_path = path_normal
+            best_distance = distance_normal
+            chosen_algorithm = "normal_shortest"
+
+        # If we have a path, use it
+        if best_path:
+            # Validate the path before using it
+            validated_path = self._validate_and_smooth_path(best_path)
+            
+            # Convert path to the format expected by move_pacman_auto
+            # Path is in (row, col) format, convert to [col, row] for consistency with pacman_pos
+            # Skip the first position if it's too close to current position (avoid immediate completion)
+            converted_path = [[pos[1], pos[0]] for pos in validated_path[1:]]
+            
+            # Remove any positions too close to current position at start of path
+            pacman_col, pacman_row = self.pacman_pos[0], self.pacman_pos[1]
+            while (converted_path and 
+                   abs(converted_path[0][0] - pacman_col) < 0.3 and 
+                   abs(converted_path[0][1] - pacman_row) < 0.3):
+                converted_path.pop(0)
+            
+            self.auto_path = converted_path
+            
+            if getattr(config, 'ENABLE_GHOST_AVOIDANCE_LOGGING', True):
+                print(f"🤖 Auto path calculated using {chosen_algorithm} algorithm")
+                print(f"   Path length: {len(self.auto_path)} steps, Distance: {best_distance}")
+                print(f"   Target: {self.auto_target}")
         else:
+            if getattr(config, 'ENABLE_GHOST_AVOIDANCE_LOGGING', True):
+                print("❌ No path found to target!")
             self.auto_path = []
 
-    def move_pacman_auto(self):
-        """Move Pacman automatically using improved AI with ghost avoidance"""
-        current_time = pygame.time.get_ticks()
-
-        # Check for immediate ghost danger
-        pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
-        immediate_danger = False
+    def _evaluate_path_safety(self, path, ghost_positions, avoidance_radius):
+        """Evaluate if a path is safe from ghosts"""
+        if not path or not ghost_positions:
+            return True
         
-        for ghost in self.ghosts:
-            ghost_col, ghost_row = int(ghost['pos'][0]), int(ghost['pos'][1])
-            distance = abs(pacman_col - ghost_col) + abs(pacman_row - ghost_row)
-            if distance <= 2:  # Ghost is very close!
-                immediate_danger = True
-                break
+        danger_count = 0
+        total_positions = len(path)
         
-        # If immediate danger, recalculate path more frequently
-        update_interval = 500 if immediate_danger else 1500
+        for pos in path:
+            row, col = pos
+            min_distance = float('inf')
+            
+            for ghost_pos in ghost_positions:
+                ghost_row, ghost_col = ghost_pos
+                distance = abs(row - ghost_row) + abs(col - ghost_col)
+                min_distance = min(min_distance, distance)
+            
+            if min_distance <= avoidance_radius:
+                danger_count += 1
         
-        # Update auto path when needed
-        if (current_time - self.auto_update_timer > update_interval or
-            not self.auto_path or
-            self.has_reached_target() or
-            immediate_danger):
+        # Path is safe if less than threshold fraction of positions are dangerous
+        safety_threshold = getattr(config, 'SAFETY_DANGER_THRESHOLD', 0.2)
+        return (danger_count / total_positions) < safety_threshold
 
-            self.auto_update_timer = current_time
-            self.find_auto_target()
+    def _calculate_path_safety_penalty(self, path, ghost_positions, avoidance_radius):
+        """Calculate safety penalty for a path (higher = more dangerous)"""
+        if not path or not ghost_positions:
+            return 0
+        
+        total_penalty = 0
+        
+        for pos in path:
+            row, col = pos
+            min_distance = float('inf')
+            
+            for ghost_pos in ghost_positions:
+                ghost_row, ghost_col = ghost_pos
+                distance = abs(row - ghost_row) + abs(col - ghost_col)
+                min_distance = min(min_distance, distance)
+            
+            if min_distance <= avoidance_radius:
+                # Exponential penalty for dangerous positions
+                penalty = (avoidance_radius - min_distance + 1) ** 2
+                total_penalty += penalty
+        
+        return total_penalty
 
-        # Emergency escape if ghost is too close
-        if immediate_danger:
-            # Find emergency escape directions
-            emergency_directions = []
-            for dx, dy in [[-1, 0], [1, 0], [0, -1], [0, 1]]:
-                escape_col = pacman_col + dx * 2  # Look 2 steps ahead
-                escape_row = pacman_row + dy * 2
+    def _validate_path_safety(self, path, ghost_positions):
+        """Enhanced validation for path safety using multiple criteria"""
+        if not path or not ghost_positions:
+            return True
+        
+        min_safe_distance = getattr(config, 'MIN_SAFE_DISTANCE', 3)
+        danger_threshold = getattr(config, 'PATH_DANGER_THRESHOLD', 0.7)
+        
+        dangerous_positions = 0
+        total_positions = len(path)
+        
+        for pos in path:
+            # Calculate minimum distance to any ghost
+            min_ghost_distance = min(
+                abs(pos[0] - ghost_pos[0]) + abs(pos[1] - ghost_pos[1])
+                for ghost_pos in ghost_positions
+            )
+            
+            # Consider position dangerous if too close to any ghost
+            if min_ghost_distance < min_safe_distance:
+                dangerous_positions += 1
+        
+        # Path is safe if less than threshold percentage of positions are dangerous
+        danger_ratio = dangerous_positions / total_positions if total_positions > 0 else 0
+        is_safe = danger_ratio < danger_threshold
+        
+        if not is_safe:
+            print(f"⚠️ Path safety validation failed: {dangerous_positions}/{total_positions} dangerous positions ({danger_ratio:.2%})")
+        
+        return is_safe
+
+    def _validate_and_smooth_path(self, path):
+        """Validate path and smooth it to ensure Pacman can follow it"""
+        if not path or len(path) < 2:
+            return path
+        
+        validated_path = [path[0]]  # Always include start
+        
+        for i in range(1, len(path)):
+            current_pos = validated_path[-1]
+            next_pos = path[i]
+            
+            # Check if we can move directly from current to next
+            if self._can_move_directly(current_pos, next_pos):
+                validated_path.append(next_pos)
+            else:
+                # If not, try to find intermediate steps
+                intermediate_path = self._find_intermediate_path(current_pos, next_pos)
+                if intermediate_path:
+                    validated_path.extend(intermediate_path[1:])  # Skip first position (already added)
+                else:
+                    # If can't find intermediate path, skip this position
+                    continue
+        
+        return validated_path
+
+    def _can_move_directly(self, pos1, pos2):
+        """Check if Pacman can move directly from pos1 to pos2"""
+        row1, col1 = pos1
+        row2, col2 = pos2
+        
+        # Must be adjacent (Manhattan distance = 1)
+        if abs(row1 - row2) + abs(col1 - col2) != 1:
+            return False
+        
+        # Must not be a wall
+        return not self.is_wall(col2, row2)
+
+    def _find_intermediate_path(self, start_pos, end_pos):
+        """Find a short path between two positions using BFS"""
+        from collections import deque
+        
+        start_row, start_col = start_pos
+        end_row, end_col = end_pos
+        
+        # If too far apart, don't bother
+        if abs(start_row - end_row) + abs(start_col - end_col) > 3:
+            return None
+        
+        queue = deque([(start_pos, [start_pos])])
+        visited = set([start_pos])
+        
+        while queue:
+            current_pos, path = queue.popleft()
+            current_row, current_col = current_pos
+            
+            if current_pos == end_pos:
+                return path
+            
+            # Try all 4 directions
+            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                next_row = current_row + dr
+                next_col = current_col + dc
+                next_pos = (next_row, next_col)
                 
-                if not self.is_wall(escape_col, escape_row):
-                    # Check if this direction moves away from ALL ghosts
-                    safe_from_all = True
-                    for ghost in self.ghosts:
-                        ghost_col, ghost_row = int(ghost['pos'][0]), int(ghost['pos'][1])
-                        current_dist = abs(pacman_col - ghost_col) + abs(pacman_row - ghost_row)
-                        escape_dist = abs(escape_col - ghost_col) + abs(escape_row - ghost_row)
-                        if escape_dist <= current_dist:  # Not moving away
-                            safe_from_all = False
+                if (next_pos not in visited and 
+                    not self.is_wall(next_col, next_row) and
+                    0 <= next_row < self.maze_gen.height and
+                    0 <= next_col < self.maze_gen.width):
+                    
+                    visited.add(next_pos)
+                    new_path = path + [next_pos]
+                    queue.append((next_pos, new_path))
+                    
+                    # Limit search depth
+                    if len(new_path) > 5:
+                        continue
+        
+        return None
+
+    def move_pacman_auto(self):
+        """Ultra simplified auto movement - no complex pathfinding"""
+        
+        # Initialize auto mode variables
+        if not hasattr(self, 'current_goal'):
+            self.current_goal = None
+        if not hasattr(self, 'goal_locked'):
+            self.goal_locked = False
+            
+        # Only find new goal if we don't have one or reached current one
+        if not self.current_goal or not self.goal_locked:
+            self.find_simple_goal()
+            self.goal_locked = True
+            
+        # Simple direct movement toward goal
+        if self.current_goal:
+            self.move_directly_toward_goal()
+
+    def find_simple_goal(self):
+        """Find closest goal and stick to it"""
+        pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
+        
+        # Find closest target
+        best_target = None
+        best_distance = float('inf')
+        
+        # Check power pellets first
+        for pellet in self.power_pellets:
+            pellet_col = int((pellet[0] - self.cell_size // 2) / self.cell_size)
+            pellet_row = int((pellet[1] - self.cell_size // 2) / self.cell_size)
+            distance = abs(pacman_row - pellet_row) + abs(pacman_col - pellet_col)
+            
+            if distance < best_distance:
+                best_distance = distance
+                best_target = (pellet_row, pellet_col)
+        
+        # Then check dots if no power pellets
+        if not best_target and self.dots:
+            for dot in self.dots:
+                dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
+                dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
+                distance = abs(pacman_row - dot_row) + abs(pacman_col - dot_col)
+                
+                if distance < best_distance:
+                    best_distance = distance
+                    best_target = (dot_row, dot_col)
+        
+        if best_target:
+            self.current_goal = best_target
+            print(f"🎯 LOCKED Goal: {best_target} (distance: {best_distance})")
+        else:
+            self.current_goal = None
+            print("❌ No goals available")
+
+    def find_path_to_goal(self, start_pos, goal_pos):
+        """Tìm đường đi tối ưu đến goal với ghost avoidance thông minh"""
+        from collections import deque
+        
+        start = (int(start_pos[0]), int(start_pos[1]))
+        goal = goal_pos
+        
+        if start == goal:
+            return None
+        
+        # Lấy vị trí ma và phân loại
+        dangerous_ghosts = []
+        for ghost in self.ghosts:
+            if not ghost.get('scared', False):  # Chỉ né ma không sợ
+                ghost_pos = (int(ghost['pos'][0]), int(ghost['pos'][1]))
+                dangerous_ghosts.append(ghost_pos)
+        
+        # BFS với ghost avoidance cho ma nguy hiểm
+        queue = deque([(start, [])])
+        visited = {start}
+        
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # down, up, right, left
+        
+        while queue:
+            (x, y), path = queue.popleft()
+            
+            for dx, dy in directions:
+                nx, ny = x + dx, y + dy
+                
+                if (nx, ny) == goal:
+                    # Tìm thấy goal, trả về bước đầu tiên
+                    first_step = path[0] if path else (dx, dy)
+                    return [first_step[0], first_step[1]]
+                
+                if (nx, ny) not in visited and self.is_valid_position(nx, ny):
+                    # Kiểm tra an toàn với ma nguy hiểm
+                    is_safe = True
+                    for ghost_pos in dangerous_ghosts:
+                        ghost_distance = abs(nx - ghost_pos[0]) + abs(ny - ghost_pos[1])
+                        if ghost_distance <= 2:  # Né ma trong bán kính 2 ô
+                            is_safe = False
                             break
                     
-                    if safe_from_all:
-                        emergency_directions.append([dx, dy])
+                    if is_safe:
+                        visited.add((nx, ny))
+                        new_path = path + [(dx, dy)]
+                        queue.append(((nx, ny), new_path))
+        
+        # Nếu không tìm thấy đường an toàn, thử đường trực tiếp (emergency)
+        print("⚠️ No safe path found, trying direct path")
+        
+        # Emergency: đi trực tiếp bất chấp ma
+        dx = 1 if goal[0] > start[0] else (-1 if goal[0] < start[0] else 0)
+        dy = 1 if goal[1] > start[1] else (-1 if goal[1] < start[1] else 0)
+        
+        # Ưu tiên x trước
+        if dx != 0 and self.is_valid_position(start[0] + dx, start[1]):
+            return [dx, 0]
+        elif dy != 0 and self.is_valid_position(start[0], start[1] + dy):
+            return [0, dy]
+        
+        return None  # Không thể di chuyển
+
+    def move_directly_toward_goal(self):
+        """Move toward goal using BFS pathfinding"""
+        if not self.current_goal:
+            return
             
-            if emergency_directions:
-                # Choose best emergency direction
-                self.pacman_next_direction = emergency_directions[0]
+        goal_row, goal_col = self.current_goal
+        pacman_col, pacman_row = int(round(self.pacman_pos[0])), int(round(self.pacman_pos[1]))
+        
+        print(f"📍 Pacman at ({pacman_row}, {pacman_col}) → Goal at {self.current_goal}")
+        
+        # Check if goal reached
+        if abs(pacman_row - goal_row) < 1 and abs(pacman_col - goal_col) < 1:
+            print(f"🎯 Goal reached! Unlocking for next goal...")
+            self.goal_locked = False
+            return
+            
+        # Use BFS to find path
+        direction = self.find_path_to_goal((pacman_col, pacman_row), (goal_col, goal_row))
+        
+        if direction:
+            print(f"🎯 BFS Found path! Next move: {direction}")
+            self.pacman_next_direction = direction
+        else:
+            print(f"❌ No path found to goal {self.current_goal}")
+            # If no path, try random valid move
+            possible_dirs = [[1,0], [-1,0], [0,1], [0,-1]]
+            for test_dir in possible_dirs:
+                test_col = pacman_col + test_dir[0]
+                test_row = pacman_row + test_dir[1]
+                if self.is_valid_position(test_col, test_row):
+                    self.pacman_next_direction = test_dir
+                    print(f"🔄 Random move: {test_dir}")
+                    break
+
+    def find_optimal_goal(self):
+        """Find the best goal (power pellet > dots > exit) - stick to one goal"""
+        pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
+        pacman_pos = (pacman_row, pacman_col)
+        
+        # Check if current goal is still valid before switching
+        if self.current_goal:
+            goal_row, goal_col = self.current_goal
+            goal_screen_pos = (goal_col * self.cell_size + self.cell_size // 2,
+                              goal_row * self.cell_size + self.cell_size // 2)
+            
+            # If current goal still exists, keep it
+            if (goal_screen_pos in self.dots or goal_screen_pos in self.power_pellets):
+                print(f"🎯 Keeping current goal at {self.current_goal}")
                 return
+        
+        # Priority 1: Power pellets when ghosts are nearby or when found
+        if self.power_pellets:
+            # Find closest power pellet
+            best_pellet = None
+            best_distance = float('inf')
+            
+            for pellet in self.power_pellets:
+                pellet_col = int((pellet[0] - self.cell_size // 2) / self.cell_size)
+                pellet_row = int((pellet[1] - self.cell_size // 2) / self.cell_size)
+                distance = abs(pacman_row - pellet_row) + abs(pacman_col - pellet_col)
+                
+                if distance < best_distance:
+                    best_distance = distance
+                    best_pellet = (pellet_row, pellet_col)
+            
+            if best_pellet:
+                self.current_goal = best_pellet
+                print(f"🎯 NEW Goal: Power pellet at {best_pellet}")
+                return
+        
+        # Priority 2: Nearest dots (find closest one and stick to it)
+        if self.dots:
+            best_dot = None
+            best_distance = float('inf')
+            
+            for dot in self.dots:
+                dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
+                dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
+                distance = abs(pacman_row - dot_row) + abs(pacman_col - dot_col)
+                
+                if distance < best_distance:
+                    best_distance = distance
+                    best_dot = (dot_row, dot_col)
+            
+            if best_dot:
+                self.current_goal = best_dot
+                print(f"🎯 NEW Goal: Dot at {best_dot}")
+                return
+        
+        # Priority 3: Exit gate (if no dots left)
+        if hasattr(self, 'exit_gate'):
+            self.current_goal = self.exit_gate
+            print(f"🎯 NEW Goal: Exit gate at {self.exit_gate}")
+        else:
+            self.current_goal = None
+            print("❌ No goals found!")
+        
+        # Priority 2: Nearest dots (find closest one and stick to it)
+        if self.dots:
+            best_dot = None
+            best_distance = float('inf')
+            
+            for dot in self.dots:
+                dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
+                dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
+                distance = abs(pacman_row - dot_row) + abs(pacman_col - dot_col)
+                
+                if distance < best_distance:
+                    best_distance = distance
+                    best_dot = (dot_row, dot_col)
+            
+            if best_dot:
+                self.current_goal = best_dot
+                print(f"🎯 NEW Goal: Dot at {best_dot}")
+                return
+        
+        # Priority 3: Exit gate (if no dots left)
+        if hasattr(self, 'exit_gate'):
+            self.current_goal = self.exit_gate
+            print(f"🎯 NEW Goal: Exit gate at {self.exit_gate}")
+        else:
+            self.current_goal = None
+            print("❌ No goals found!")
 
-        # Normal pathfinding
-        if self.auto_path:
-            # Get next position in path
-            next_pos = self.auto_path[0]
-            next_row, next_col = next_pos
+    def calculate_path_to_goal(self):
+        """Calculate shortest path to current goal"""
+        if not self.current_goal:
+            return
+            
+        pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
+        pacman_pos = (pacman_row, pacman_col)
+        
+        path, distance = self.dijkstra.shortest_path(pacman_pos, self.current_goal)
+        if path:
+            self.path_to_goal = path
+            print(f"📍 Path calculated: {len(path)} steps to goal {self.current_goal}")
+        else:
+            print("❌ No path to goal found")
+            self.path_to_goal = []
+            # If no path found, invalidate current goal
+            self.current_goal = None
 
-            # Calculate direction to next position
-            current_col, current_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
-            dx = next_col - current_col
-            dy = next_row - current_row
+    def find_safe_detour(self):
+        """Find safe route when ghost is near"""
+        pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
+        
+        # Get ghost positions
+        ghost_positions = [(int(g['pos'][1]), int(g['pos'][0])) for g in self.ghosts 
+                          if not g.get('scared', False)]
+        
+        # Find safe directions (away from ghosts)
+        safe_directions = []
+        for dx, dy in [[1, 0], [-1, 0], [0, 1], [0, -1]]:
+            new_col = pacman_col + dx
+            new_row = pacman_row + dy
+            
+            if not self.is_wall(new_col, new_row):
+                # Check if this direction is safe from ghosts
+                min_ghost_distance = min([
+                    abs(new_row - gr) + abs(new_col - gc)
+                    for gr, gc in ghost_positions
+                ]) if ghost_positions else 10
+                
+                if min_ghost_distance >= 2:  # Safe distance
+                    # Calculate if this direction leads closer to goal
+                    if self.current_goal:
+                        goal_distance = abs(new_row - self.current_goal[0]) + abs(new_col - self.current_goal[1])
+                        safe_directions.append((dx, dy, goal_distance))
+        
+        # Choose direction that's safe and closest to goal
+        if safe_directions:
+            safe_directions.sort(key=lambda x: x[2])  # Sort by distance to goal
+            chosen_direction = safe_directions[0][:2]
+            self.pacman_next_direction = [chosen_direction[0], chosen_direction[1]]
+            
+            # Recalculate path after detour
+            self.path_to_goal = []
+        else:
+            print("🚨 No safe direction found!")
 
-            # Set direction with more precise movement
-            if abs(dx) > abs(dy):
-                self.pacman_next_direction = [1 if dx > 0 else -1, 0]
-            else:
-                self.pacman_next_direction = [0, 1 if dy > 0 else -1]
+    def move_toward_goal(self):
+        """Move toward current goal using calculated path"""
+        if not self.path_to_goal or len(self.path_to_goal) <= 1:
+            print("📍 No path available - staying put")
+            return
+        
+        # Clean up path - remove current position if we're already there
+        current_col, current_row = int(round(self.pacman_pos[0])), int(round(self.pacman_pos[1]))
+        
+        # Remove waypoints that we've already reached
+        while (self.path_to_goal and 
+               len(self.path_to_goal) > 1 and  # Keep at least one waypoint (the goal)
+               abs(current_row - self.path_to_goal[0][0]) < 0.8 and 
+               abs(current_col - self.path_to_goal[0][1]) < 0.8):
+            self.path_to_goal.pop(0)
+            print(f"✅ Reached waypoint, remaining path: {len(self.path_to_goal)} steps")
+        
+        if not self.path_to_goal:
+            print("🎯 Goal reached!")
+            return
+            
+        # Get next target position from path
+        next_row, next_col = self.path_to_goal[0]  # Always use first position in path
+        
+        print(f"📍 Current: ({current_row}, {current_col}) → Target: ({next_row}, {next_col})")
+        
+        # Calculate direction to move
+        dx = next_col - current_col  
+        dy = next_row - current_row  
+        
+        # Simple direction logic - move one step at a time
+        direction = [0, 0]
+        if dy > 0:      # Need to go down
+            direction = [0, 1]
+        elif dy < 0:    # Need to go up  
+            direction = [0, -1]
+        elif dx > 0:    # Need to go right
+            direction = [1, 0]
+        elif dx < 0:    # Need to go left
+            direction = [-1, 0]
+        
+        if direction != [0, 0]:
+            self.pacman_next_direction = direction
+            print(f"🚀 Moving {['left', 'right'][direction[0]] if direction[0] != 0 else ['up', 'down'][direction[1]]}")
+        else:
+            print(f"🔄 Already at target position")
+            # If already at target, remove this waypoint
+            if self.path_to_goal:
+                self.path_to_goal.pop(0)
 
-            # Check if we've reached the next position (more precise)
-            if abs(self.pacman_pos[0] - next_col) < 0.5 and abs(self.pacman_pos[1] - next_row) < 0.5:
-                self.auto_path.pop(0)  # Remove reached position
+    def has_reached_current_goal(self):
+        """Check if current goal has been reached or is no longer valid"""
+        if not self.current_goal:
+            return True
+        
+        pacman_col, pacman_row = self.pacman_pos[0], self.pacman_pos[1]
+        goal_row, goal_col = self.current_goal
+        
+        # Check if reached
+        if abs(pacman_col - goal_col) < 1 and abs(pacman_row - goal_row) < 1:
+            return True
+        
+        # Check if goal is still valid (dot/pellet still exists)
+        goal_screen_pos = (goal_col * self.cell_size + self.cell_size // 2,
+                          goal_row * self.cell_size + self.cell_size // 2)
+        
+        # Check if it's still in dots or power_pellets
+        return (goal_screen_pos not in self.dots and 
+                goal_screen_pos not in self.power_pellets)
 
     def has_reached_target(self):
         """Check if Pacman has reached the current auto target"""
         if not self.auto_target:
             return True
 
-        pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
+        pacman_col, pacman_row = self.pacman_pos[0], self.pacman_pos[1]
         target_row, target_col = self.auto_target
 
+        # Note: auto_target is in (row, col) format, pacman_pos is in [col, row] format
         return abs(pacman_col - target_col) < 1 and abs(pacman_row - target_row) < 1
 
     def draw_auto_path(self):
@@ -1356,6 +2043,11 @@ class PacmanGame:
             if distance < 10:
                 self.power_pellets.remove(pellet)
                 self.score += 50
+                
+                # Set power mode for 10 seconds
+                self.power_mode_end_time = pygame.time.get_ticks() + 10000  # 10 seconds
+                print("💪 Power mode activated! Ghosts can be eaten for 10 seconds")
+                
                 # Make all ghosts frightened for 10 seconds
                 for ghost in self.ghosts:
                     ghost['scared'] = True
@@ -1532,7 +2224,8 @@ class PacmanGame:
         if self.game_state == "playing":
             # Move Pacman based on mode
             if self.auto_mode:
-                self.move_pacman_auto()
+                self.move_pacman_auto()  # Calculate AI direction
+                self.move_pacman()       # Execute the movement
             else:
                 self.move_pacman()
                 
