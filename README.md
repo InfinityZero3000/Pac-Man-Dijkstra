@@ -34,61 +34,13 @@ Chạy game trực tiếp:
 python maze_game.py
 ```
 
-## 🎮 Hướng dẫn điều khiển
-
-- **⬆️⬇️⬅️➡️ Phím mũi tên**: Di chuyển nhân vật (chấm vàng)
-- **🔍 Space**: Tìm và hiển thị đường đi ngắn nhất đến đích (chấm xanh lá)
-- **🔄 R**: Tạo mê cung mới
-- **❌ Escape**: Thoát game
-
-## 📁 Cấu trúc dự án
-
-```
-game-AI/
-├── maze_game.py              # Game chính với giao diện Pygame
-├── maze_generator.py         # Tạo mê cung ngẫu nhiên
-├── dijkstra_algorithm.py     # Thuật toán tìm đường Dijkstra/A*
-├── path_validator.py         # Kiểm tra tính hợp lệ của đường đi
-├── config.py                 # Cấu hình game
-├── pathfinding_data_logger.py # Ghi log dữ liệu pathfinding
-├── scripts/
-│   ├── generate_training_data.py # Tạo dữ liệu training
-│   ├── train_model.py           # Huấn luyện model AI
-│   └── infer_policy.py          # Suy luận policy
-├── requirements.txt          # Các package cần thiết
-└── README.md                # Tài liệu này
-```
-
-## ⚙️ Thông số kỹ thuật
-
-### Cấu hình mê cung
-- **Kích thước mặc định**: 41x41 cells
-- **Kích thước cell**: 20x20 pixels
-- **Kích thước màn hình**: 820x820 pixels
-- **Tỷ lệ đường đi**: ~50% không gian mở
-- **Độ phức tạp**: Bao gồm ngõ cụt và nhánh rẽ
-
-### Thuật toán
-- **Tạo mê cung**: Randomized Depth-First Search (DFS)
-- **Tìm đường**: Dijkstra với A* optimization
-- **Heuristic**: Manhattan distance
-- **Validation**: Kiểm tra từng bước không đi qua tường
-- **Performance**: Tối ưu cho mê cung lớn
-
-### Màu sắc và ký hiệu
-- 🟦 **Màu xanh**: Tường/vật cản (maze[row,col] = 1)
-- ⬜ **Màu đen**: Đường đi (maze[row,col] = 0)  
-- 🟡 **Chấm vàng**: Nhân vật (player)
-- 🟢 **Chấm xanh lá**: Đích đến (goal)
-- 🔴 **Chấm đỏ**: Đường đi tối ưu
-
 ## 🔧 Cấu hình nâng cao
 
 Có thể điều chỉnh trong `maze_game.py`:
 
 ```python
 # Thay đổi kích thước mê cung
-width=41, height=41, cell_size=20
+width=51, height=41, cell_size=20
 
 # Thay đổi màu sắc
 self.BLACK = (0, 0, 0)      # Đường đi
