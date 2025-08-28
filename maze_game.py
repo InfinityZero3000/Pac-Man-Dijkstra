@@ -19,7 +19,7 @@ class PacmanGame:
         
         # Setup signal handler for graceful shutdown
         def signal_handler(signum, frame):
-            print("\n👋 Received signal, shutting down gracefully...")
+            print("\nReceived signal, shutting down gracefully...")
             self.running = False
         
         signal.signal(signal.SIGINT, signal_handler)
