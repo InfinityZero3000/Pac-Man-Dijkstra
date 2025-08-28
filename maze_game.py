@@ -333,7 +333,7 @@ class PacmanGame:
             ghost_modes = [f"{g['name'][:1]}:{g['mode'][:3]}" for g in self.ghosts[:2]]  # Show first 2 ghosts
             ghost_info = f"👻 {' '.join(ghost_modes)}"
             
-            inst_text = self.font.render(f"{mode_text} | {ghost_info} | Arrow Keys: Move | A: Auto | H: Show Path | P: Pause | R: Restart", True, self.YELLOW)
+            inst_text = self.font.render(f"{mode_text} | {ghost_info} | Arrow Keys: Move | A: Auto | E: Escape to Exit | H: Show Path | P: Pause | R: Restart", True, self.YELLOW)
             self.screen.blit(inst_text, (10, ui_y + 30))
 
             # Show path visualization status
@@ -928,29 +928,36 @@ class PacmanGame:
             
             return best_direction
 
-    def toggle_auto_mode(self):
-        """Toggle between manual and automatic Pacman control"""
-        self.auto_mode = not self.auto_mode
-        if self.auto_mode:
-            print("🤖 Auto mode ON - Pacman will play automatically!")
-            self.find_auto_target()
+    def set_escape_target(self):
+        """Set target to exit gate for emergency escape"""
+        if hasattr(self, 'exit_gate'):
+            self.auto_target = self.exit_gate
+            self.calculate_auto_path()
+            print("🚪 Escape mode: Heading to exit gate!")
         else:
-            print("🎮 Manual mode ON - You control Pacman!")
-            self.auto_path = []
-            self.auto_target = None
-            self.pacman_direction = [0, 0]
-            self.pacman_next_direction = [0, 0]
+            print("❌ No exit gate found!")
 
     def find_auto_target(self):
-        """Find the best target for Pacman with improved strategy"""
-        if not self.dots and not self.power_pellets:
-            return
-
+        """Find the best target for Pacman with improved strategy - prioritize exit gate"""
         pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
         pacman_pos = (pacman_row, pacman_col)
 
         # Get ghost positions for avoidance
         ghost_positions = [(int(g['pos'][1]), int(g['pos'][0])) for g in self.ghosts]
+
+        # If no dots or pellets left, go to exit gate
+        if not self.dots and not self.power_pellets:
+            if hasattr(self, 'exit_gate'):
+                self.auto_target = self.exit_gate
+                self.calculate_auto_path()
+                return
+
+        # Get distance to exit gate for comparison
+        exit_distance = float('inf')
+        if hasattr(self, 'exit_gate'):
+            path_to_exit, exit_dist = self.dijkstra.shortest_path(pacman_pos, self.exit_gate)
+            if path_to_exit:
+                exit_distance = exit_dist
 
         # Find nearest safe power pellet first (higher priority)
         if self.power_pellets:
@@ -970,8 +977,11 @@ class PacmanGame:
                 # Calculate path distance
                 path, distance = self.dijkstra.shortest_path(pacman_pos, pellet_pos)
                 if path and distance > 0:
-                    # Score = safety / distance (prefer safe and close targets)
-                    score = safety_score / distance
+                    # Consider distance to exit gate after eating pellet
+                    total_distance = distance + exit_distance
+                    
+                    # Score = safety / total_distance (prefer safe pellets that lead to exit)
+                    score = safety_score / total_distance
                     if score > best_score:
                         best_score = score
                         best_pellet = pellet_pos
@@ -987,7 +997,7 @@ class PacmanGame:
             best_score = float('-inf')
 
             # Consider multiple dots and choose the best one
-            for dot in self.dots[:20]:  # Limit to first 20 for performance
+            for dot in self.dots[:30]:  # Limit to first 30 for performance
                 # Convert screen coordinates to maze coordinates
                 dot_col = int((dot[0] - self.cell_size // 2) / self.cell_size)
                 dot_row = int((dot[1] - self.cell_size // 2) / self.cell_size)
@@ -1000,8 +1010,11 @@ class PacmanGame:
                 # Calculate path distance
                 path, distance = self.dijkstra.shortest_path(pacman_pos, dot_pos)
                 if path and distance > 0:
-                    # Improved scoring: prefer safe, close targets
-                    score = (safety_score * 2) / distance  # Weight safety more
+                    # Consider distance to exit gate after eating dot
+                    total_distance = distance + exit_distance
+                    
+                    # Improved scoring: prefer safe, close targets that lead to exit
+                    score = (safety_score * 2) / total_distance  # Weight safety more
                     if score > best_score:
                         best_score = score
                         best_dot = dot_pos
@@ -1341,6 +1354,8 @@ class PacmanGame:
                 elif event.key == pygame.K_h:
                     self.show_auto_path = not self.show_auto_path
                     print(f"🔍 Auto path visualization: {'ON' if self.show_auto_path else 'OFF'}")
+                elif event.key == pygame.K_e:
+                    self.set_escape_target()
                 elif event.key == pygame.K_r:
                     self.restart_game()
                 elif event.key == pygame.K_n and self.game_state == "level_complete":
@@ -1413,6 +1428,19 @@ class PacmanGame:
         self.draw_ghosts()
         self.draw_ui()
         pygame.display.flip()
+
+    def toggle_auto_mode(self):
+        """Toggle between manual and automatic Pacman control"""
+        self.auto_mode = not self.auto_mode
+        if self.auto_mode:
+            print("🤖 Auto mode ON - Pacman will play automatically!")
+            self.find_auto_target()
+        else:
+            print("🎮 Manual mode ON - You control Pacman!")
+            self.auto_path = []
+            self.auto_target = None
+            self.pacman_direction = [0, 0]
+            self.pacman_next_direction = [0, 0]
 
     def run(self):
         """Main game loop"""
