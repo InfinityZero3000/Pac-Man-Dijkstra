@@ -6,7 +6,7 @@ from maze_generator import MazeGenerator
 from dijkstra_algorithm import DijkstraAlgorithm
 
 class PacmanGame:
-    def __init__(self, width=28, height=31, cell_size=20):
+    def __init__(self, width=51, height=41, cell_size=23):
         self.maze_gen = MazeGenerator(width, height)
         self.dijkstra = DijkstraAlgorithm(self.maze_gen)
         self.cell_size = cell_size
@@ -40,7 +40,7 @@ class PacmanGame:
         self.level = 1
 
         # Pacman properties - will be set after maze generation
-        self.pacman_pos = [14, 23]  # Temporary position, will be updated
+        self.pacman_pos = [14.0, 23.0]  # Temporary position, will be updated as floats
         self.pacman_direction = [0, 0]
         self.pacman_next_direction = [0, 0]
         self.pacman_speed = 2
@@ -53,6 +53,9 @@ class PacmanGame:
         # Set Pacman starting position from maze start (black cell)
         start_row, start_col = self.start
         self.pacman_pos = [float(start_col), float(start_row)]  # Convert (row,col) to [col,row] as floats
+
+        # Exit gate - opposite corner from Pacman start
+        self.exit_gate = self.calculate_exit_gate_position()
 
         # Dots and pellets
         self.dots = []
@@ -96,6 +99,35 @@ class PacmanGame:
             return False
         return True
 
+    def calculate_exit_gate_position(self):
+        """Calculate the exit gate position at the opposite corner from Pacman start"""
+        start_row, start_col = self.start
+        
+        # Calculate opposite corner
+        opposite_row = self.maze_gen.height - 1 - start_row
+        opposite_col = self.maze_gen.width - 1 - start_col
+        
+        # Find the nearest valid position to the opposite corner
+        best_pos = (opposite_row, opposite_col)
+        best_distance = float('inf')
+        
+        # Search in a small area around the opposite corner
+        for dr in range(-3, 4):
+            for dc in range(-3, 4):
+                test_row = opposite_row + dr
+                test_col = opposite_col + dc
+                
+                if (0 <= test_row < self.maze_gen.height and 
+                    0 <= test_col < self.maze_gen.width and
+                    self.maze[test_row, test_col] == 0):  # Valid path
+                    
+                    distance = abs(test_row - opposite_row) + abs(test_col - opposite_col)
+                    if distance < best_distance:
+                        best_distance = distance
+                        best_pos = (test_row, test_col)
+        
+        return best_pos
+
     def place_dots_and_pellets(self):
         """Place dots and power pellets on the maze"""
         self.dots = []
@@ -122,22 +154,61 @@ class PacmanGame:
         ghost_colors = [self.RED, self.PINK, self.CYAN, self.ORANGE]
         ghost_names = ["Blinky", "Pinky", "Inky", "Clyde"]
 
-        # Create exactly 4 ghosts, no more
+        # Find a valid starting position near the center
+        center_row = self.maze_gen.height // 2
+        center_col = self.maze_gen.width // 2
+        
+        # Search for valid positions around center
+        ghost_start_pos = self.find_valid_ghost_start_position(center_row, center_col)
+        
+        # Create exactly 4 ghosts starting from valid center position
         for i in range(4):
             color = ghost_colors[i]
             name = ghost_names[i]
+            
+            # All ghosts start at the same valid position and spread out
             ghost = {
                 'name': name,
                 'color': color,
-                'pos': [14 + (i % 2), 14 + (i // 2)],  # Different starting positions
+                'pos': [float(ghost_start_pos[1]), float(ghost_start_pos[0])],  # [col, row] format
                 'direction': [0, 0],
                 'speed': 1.2,  # Slightly slower than pacman
-                'mode': 'scatter',  # scatter, chase, frightened
+                'mode': 'random',  # Start in random mode to spread out
                 'target': None,
                 'animation': 0,
-                'last_direction_change': 0
+                'last_direction_change': 0,
+                'position_history': [],  # Track recent positions for anti-stuck
+                'stuck_counter': 0,  # Count consecutive moves to same area
+                'last_position': None,  # Last position for detecting loops
+                'random_timer': 0,  # Timer for random mode duration
+                'spread_timer': 0  # Timer to ensure ghosts spread from center
             }
             self.ghosts.append(ghost)
+
+    def find_valid_ghost_start_position(self, center_row, center_col):
+        """Find a valid starting position for ghosts near the center"""
+        # First, check if center itself is valid
+        if (0 <= center_row < self.maze_gen.height and 
+            0 <= center_col < self.maze_gen.width and
+            self.maze[center_row, center_col] == 0):  # Valid path
+            return (center_row, center_col)
+        
+        # Search in expanding circles around center
+        for radius in range(1, min(self.maze_gen.height, self.maze_gen.width) // 2):
+            for dr in range(-radius, radius + 1):
+                for dc in range(-radius, radius + 1):
+                    # Only check positions on the edge of current radius
+                    if abs(dr) == radius or abs(dc) == radius:
+                        test_row = center_row + dr
+                        test_col = center_col + dc
+                        
+                        if (0 <= test_row < self.maze_gen.height and 
+                            0 <= test_col < self.maze_gen.width and
+                            self.maze[test_row, test_col] == 0):  # Valid path
+                            return (test_row, test_col)
+        
+        # Fallback: use Pacman's start position if nothing found
+        return self.start
 
     def draw_maze(self):
         """Draw the maze with Pacman-style walls"""
@@ -162,6 +233,22 @@ class PacmanGame:
         # Power pellets
         for pellet in self.power_pellets:
             pygame.draw.circle(self.screen, self.WHITE, pellet, 6)
+
+    def draw_exit_gate(self):
+        """Draw the exit gate at the opposite corner"""
+        if hasattr(self, 'exit_gate'):
+            gate_row, gate_col = self.exit_gate
+            center = ((gate_col + 0.5) * self.cell_size, (gate_row + 0.5) * self.cell_size)
+            
+            # Draw exit gate as a glowing portal
+            gate_size = self.cell_size // 2 - 2
+            
+            # Outer glow
+            pygame.draw.circle(self.screen, (255, 255, 255), center, gate_size + 3)
+            # Inner portal
+            pygame.draw.circle(self.screen, (0, 255, 0), center, gate_size)
+            # Center sparkle
+            pygame.draw.circle(self.screen, (255, 255, 255), center, gate_size // 2)
 
     def draw_pacman(self):
         """Draw Pacman with animation"""
@@ -241,11 +328,20 @@ class PacmanGame:
         # Instructions
         if self.game_state == "playing":
             mode_text = "🤖 AUTO" if self.auto_mode else "🎮 MANUAL"
-            inst_text = self.font.render(f"{mode_text} | Arrow Keys: Move | A: Auto | H: Show Path | P: Pause | R: Restart", True, self.YELLOW)
+            
+            # Show ghost modes
+            ghost_modes = [f"{g['name'][:1]}:{g['mode'][:3]}" for g in self.ghosts[:2]]  # Show first 2 ghosts
+            ghost_info = f"👻 {' '.join(ghost_modes)}"
+            
+            inst_text = self.font.render(f"{mode_text} | {ghost_info} | Arrow Keys: Move | A: Auto | H: Show Path | P: Pause | R: Restart", True, self.YELLOW)
             self.screen.blit(inst_text, (10, ui_y + 30))
 
-            if self.auto_mode and self.show_auto_path:
-                path_text = self.font.render("Auto path: Cyan dots", True, (0, 255, 255))
+            # Show path visualization status
+            if self.show_auto_path:
+                if self.auto_mode and self.auto_path:
+                    path_text = self.font.render("Auto path: Cyan dots (H to toggle)", True, (0, 255, 255))
+                else:
+                    path_text = self.font.render("Path visualization: ON (Enable Auto mode to see path)", True, (255, 255, 0))
                 self.screen.blit(path_text, (10, ui_y + 55))
 
         elif self.game_state == "paused":
@@ -257,6 +353,14 @@ class PacmanGame:
             restart_text = self.font.render("Press R to restart", True, self.WHITE)
             self.screen.blit(game_over_text, (self.screen_width // 2 - 100, self.screen_height // 2 - 20))
             self.screen.blit(restart_text, (self.screen_width // 2 - 70, self.screen_height // 2 + 20))
+
+        elif self.game_state == "level_complete":
+            complete_text = self.large_font.render("LEVEL COMPLETE!", True, (0, 255, 0))
+            bonus_text = self.font.render(f"Exit Gate Bonus: +1000", True, (255, 255, 0))
+            next_text = self.font.render("Press N for next level or R to restart", True, self.WHITE)
+            self.screen.blit(complete_text, (self.screen_width // 2 - 120, self.screen_height // 2 - 40))
+            self.screen.blit(bonus_text, (self.screen_width // 2 - 80, self.screen_height // 2))
+            self.screen.blit(next_text, (self.screen_width // 2 - 120, self.screen_height // 2 + 40))
 
     def move_pacman(self):
         """Move Pacman with GRID-BASED movement - ONE BLOCK AT A TIME"""
@@ -325,7 +429,7 @@ class PacmanGame:
                 self.pacman_pos[1] = float(current_row)
 
     def move_ghosts(self):
-        """Move ghosts with GRID-BASED movement - ONE BLOCK AT A TIME"""
+        """Move ghosts with GRID-BASED movement - ONE BLOCK AT A TIME with enhanced AI"""
         for ghost in self.ghosts:
             # Get current block position
             current_col = int(round(ghost['pos'][0]))
@@ -334,9 +438,26 @@ class PacmanGame:
             # Check if ghost is in valid position
             if not self.is_valid_position(current_col, current_row):
                 # Reset ghost to a safe position
-                ghost['pos'] = [14.0, 14.0]  # Center of maze as float
+                center_row = self.maze_gen.height // 2
+                center_col = self.maze_gen.width // 2
+                ghost_start_pos = self.find_valid_ghost_start_position(center_row, center_col)
+                ghost['pos'] = [float(ghost_start_pos[1]), float(ghost_start_pos[0])]
                 ghost['direction'] = [0, 0]
                 continue
+            
+            # Track position history for anti-stuck detection
+            current_pos = (current_row, current_col)
+            if ghost['last_position'] != current_pos:
+                ghost['position_history'].append(current_pos)
+                if len(ghost['position_history']) > 15:  # Keep more history
+                    ghost['position_history'].pop(0)
+                ghost['last_position'] = current_pos
+                ghost['stuck_counter'] = 0
+            else:
+                ghost['stuck_counter'] += 1
+            
+            # Detect if ghost is stuck in a loop
+            is_stuck = self.detect_stuck_ghost(ghost)
             
             # Get all possible directions for next block
             directions = [[0, -1], [0, 1], [-1, 0], [1, 0]]
@@ -352,24 +473,8 @@ class PacmanGame:
                     valid_directions.append([dx, dy])
 
             if valid_directions:
-                # Remove opposite direction to prevent immediate reversal
-                opposite_direction = [-ghost['direction'][0], -ghost['direction'][1]]
-                if opposite_direction in valid_directions and len(valid_directions) > 1:
-                    valid_directions.remove(opposite_direction)
-
-                # Choose direction based on ghost personality and mode
-                if ghost['mode'] == 'chase':
-                    new_direction = self.get_chase_direction(ghost, valid_directions)
-                elif ghost['mode'] == 'scatter':
-                    new_direction = self.get_scatter_direction(ghost, valid_directions)
-                elif ghost['mode'] == 'frightened':
-                    new_direction = random.choice(valid_directions)
-                else:
-                    # Default: continue current direction or choose random
-                    if ghost['direction'] in valid_directions and random.random() < 0.8:
-                        new_direction = ghost['direction']
-                    else:
-                        new_direction = random.choice(valid_directions)
+                # Smart direction selection with momentum preservation
+                new_direction = self.get_smart_direction(ghost, valid_directions, current_pos, is_stuck)
 
                 # Calculate target block position
                 target_col = current_col + new_direction[0]
@@ -380,7 +485,7 @@ class PacmanGame:
                     ghost['direction'] = new_direction
                     
                     # Smooth animation towards target block
-                    step_size = 0.08  # Slower than Pacman
+                    step_size = 0.12  # Slightly faster for smoother movement
                     
                     # Move towards target position
                     if abs(ghost['pos'][0] - target_col) > 0.01:
@@ -407,9 +512,181 @@ class PacmanGame:
                     ghost['pos'][0] = float(current_col)
                     ghost['pos'][1] = float(current_row)
 
-                # Switch modes occasionally
-                if random.random() < 0.005:  # 0.5% chance per frame
-                    ghost['mode'] = 'chase' if ghost['mode'] == 'scatter' else 'scatter'
+                # Update spread timer
+                ghost['spread_timer'] += 1
+
+                # Enhanced mode switching with spreading logic
+                if ghost['mode'] == 'random' and ghost['spread_timer'] > 60:  # After spreading
+                    # Switch to scatter or chase based on distance from center
+                    center_row = self.maze_gen.height // 2
+                    center_col = self.maze_gen.width // 2
+                    distance_from_center = abs(current_row - center_row) + abs(current_col - center_col)
+                    
+                    if distance_from_center > 10:  # Far from center
+                        ghost['mode'] = 'scatter' if random.random() < 0.6 else 'chase'
+                        ghost['random_timer'] = 0
+                    else:
+                        # Stay in random mode until spread out more
+                        pass
+                elif random.random() < 0.001:  # Reduced frequency for mode switching
+                    if ghost['mode'] == 'chase':
+                        ghost['mode'] = 'scatter'
+                    elif ghost['mode'] == 'scatter':
+                        ghost['mode'] = 'chase'
+                
+                # Random mode timer (backup)
+                if ghost['mode'] == 'random':
+                    ghost['random_timer'] += 1
+                    if ghost['random_timer'] > 300:  # 5 seconds at 60fps
+                        ghost['random_timer'] = 0
+                        ghost['mode'] = 'scatter'
+
+    def get_smart_direction(self, ghost, valid_directions, current_pos, is_stuck):
+        """Smart direction selection that reduces oscillation and improves flow"""
+        if not valid_directions:
+            return random.choice([[0, -1], [0, 1], [-1, 0], [1, 0]])
+        
+        current_row, current_col = current_pos
+        current_direction = ghost['direction']
+        
+        # Check if we're in a corridor (only 2 directions available)
+        is_in_corridor = len(valid_directions) == 2
+        
+        # Check if we're on a long straight path
+        is_on_long_path = self.is_on_long_straight_path(ghost, current_pos, current_direction)
+        
+        # Prioritize directions based on context
+        direction_scores = {}
+        
+        for direction in valid_directions:
+            score = 10  # Base score
+            
+            # 1. MASSIVE momentum bonus - especially for corridors and long paths
+            if direction == current_direction:
+                base_momentum_bonus = 80  # Increased from 50
+                
+                if is_in_corridor:
+                    score += base_momentum_bonus * 2  # Double bonus in corridors
+                elif is_on_long_path:
+                    score += base_momentum_bonus * 1.5  # 1.5x bonus on long paths
+                else:
+                    score += base_momentum_bonus
+            
+            # 2. HEAVILY penalize opposite direction unless absolutely necessary
+            opposite_direction = [-current_direction[0], -current_direction[1]]
+            if direction == opposite_direction:
+                if len(valid_directions) == 1:
+                    score += 0  # No penalty if only option
+                elif is_stuck and len(valid_directions) == 2:
+                    score -= 20  # Moderate penalty even when stuck in corridor
+                elif is_in_corridor:
+                    score -= 200  # Massive penalty for reversing in corridor
+                elif is_on_long_path:
+                    score -= 150  # Heavy penalty for reversing on long path
+                else:
+                    score -= 100  # Heavy penalty normally
+            
+            # 3. Prefer directions that lead to more open areas
+            target_col = current_col + direction[0]
+            target_row = current_row + direction[1]
+            
+            # Count adjacent open spaces from target position
+            open_spaces = 0
+            for dx, dy in [[0, -1], [0, 1], [-1, 0], [1, 0]]:
+                check_col = target_col + dx
+                check_row = target_row + dy
+                if self.is_valid_position(check_col, check_row):
+                    open_spaces += 1
+            
+            score += open_spaces * 5  # Bonus for leading to open areas
+            
+            # 4. Heavily avoid recently visited areas (stronger penalty)
+            target_pos = (target_row, target_col)
+            if target_pos in ghost['position_history'][-8:]:
+                recent_index = len(ghost['position_history']) - ghost['position_history'][::-1].index(target_pos) - 1
+                recency_penalty = (8 - (len(ghost['position_history']) - recent_index)) * 8  # Increased from 3
+                score -= recency_penalty
+            
+            # 5. Extra penalty for positions visited very recently (last 3 moves)
+            if target_pos in ghost['position_history'][-3:]:
+                score -= 50  # Heavy penalty for very recent positions
+            
+            # 6. Mode-specific bonuses (reduced to not override momentum)
+            if ghost['mode'] == 'chase':
+                # Bonus for moving towards Pacman
+                pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
+                current_distance = abs(current_col - pacman_col) + abs(current_row - pacman_row)
+                new_distance = abs(target_col - pacman_col) + abs(target_row - pacman_row)
+                if new_distance < current_distance:
+                    score += 8  # Reduced from 15
+            
+            elif ghost['mode'] == 'scatter':
+                # Bonus for moving towards corner
+                corners = {
+                    'Blinky': (self.maze_gen.width - 2, 1),
+                    'Pinky': (1, 1),
+                    'Inky': (self.maze_gen.width - 2, self.maze_gen.height - 2),
+                    'Clyde': (1, self.maze_gen.height - 2)
+                }
+                target_corner = corners.get(ghost['name'], (self.maze_gen.width // 2, self.maze_gen.height // 2))
+                corner_col, corner_row = target_corner
+                
+                current_distance = abs(current_col - corner_col) + abs(current_row - corner_row)
+                new_distance = abs(target_col - corner_col) + abs(target_row - corner_row)
+                if new_distance < current_distance:
+                    score += 5  # Reduced from 10
+            
+            direction_scores[tuple(direction)] = score
+        
+        # Choose direction with highest score
+        best_direction = max(direction_scores.keys(), key=lambda d: direction_scores[d])
+        
+        # Reduce randomness to preserve momentum better
+        random_chance = 0.05 if is_in_corridor or is_on_long_path else 0.1  # Reduced randomness
+        
+        if random.random() < random_chance:
+            # But still prefer higher-scored directions
+            weighted_choices = []
+            for direction, score in direction_scores.items():
+                weight = max(1, int(score // 15))  # Convert score to integer weight
+                weighted_choices.extend([list(direction)] * weight)
+            return random.choice(weighted_choices)
+        
+        return list(best_direction)
+
+    def is_on_long_straight_path(self, ghost, current_pos, current_direction):
+        """Check if ghost is on a long straight path where it should continue straight"""
+        if current_direction == [0, 0]:  # Not moving
+            return False
+        
+        current_row, current_col = current_pos
+        
+        # Check how far we can go straight in current direction
+        straight_distance = 0
+        check_col, check_row = current_col, current_row
+        
+        # Look ahead in current direction
+        for step in range(1, 8):  # Check up to 8 steps ahead
+            check_col += current_direction[0]
+            check_row += current_direction[1]
+            
+            if not self.is_valid_position(check_col, check_row):
+                break
+                
+            straight_distance += 1
+            
+            # Check if this position is an intersection (more than 2 directions)
+            directions_at_pos = 0
+            for dx, dy in [[0, -1], [0, 1], [-1, 0], [1, 0]]:
+                if self.is_valid_position(check_col + dx, check_row + dy):
+                    directions_at_pos += 1
+            
+            # If we hit an intersection, stop counting
+            if directions_at_pos > 2:
+                break
+        
+        # Consider it a long path if we can go straight for 4+ steps
+        return straight_distance >= 4
 
     def get_chase_direction(self, ghost, valid_directions):
         """Get direction to chase Pacman"""
@@ -463,6 +740,193 @@ class PacmanGame:
                 best_direction = direction
 
         return best_direction
+
+    def should_prefer_turns(self, ghost, valid_directions):
+        """Determine if ghost should prefer turning at intersections"""
+        current_col = int(round(ghost['pos'][0]))
+        current_row = int(round(ghost['pos'][1]))
+        
+        # Count available directions
+        num_directions = len(valid_directions)
+        
+        # If at intersection (more than 2 directions), prefer turning
+        if num_directions > 2:
+            return True
+            
+        # If going straight would lead to dead end, prefer turning
+        if ghost['direction'] in valid_directions:
+            straight_col = current_col + ghost['direction'][0] * 2
+            straight_row = current_row + ghost['direction'][1] * 2
+            
+            # Check if 2 steps ahead is a dead end
+            straight_directions = [[0, -1], [0, 1], [-1, 0], [1, 0]]
+            straight_valid = 0
+            for dx, dy in straight_directions:
+                if self.is_valid_position(straight_col + dx, straight_row + dy):
+                    straight_valid += 1
+            
+            if straight_valid <= 2:  # Dead end or corridor ahead
+                return True
+        
+        return False
+
+    def get_turn_preference_direction(self, ghost, valid_directions):
+        """Get direction that prefers turns over straight movement"""
+        if not valid_directions:
+            return random.choice([[0, -1], [0, 1], [-1, 0], [1, 0]])
+        
+        # Separate straight and turn directions
+        straight_directions = []
+        turn_directions = []
+        
+        for direction in valid_directions:
+            if direction == ghost['direction']:
+                straight_directions.append(direction)
+            else:
+                turn_directions.append(direction)
+        
+        # Prefer turns 70% of the time if available
+        if turn_directions and random.random() < 0.7:
+            return random.choice(turn_directions)
+        elif straight_directions:
+            return random.choice(straight_directions)
+        else:
+            return random.choice(valid_directions)
+
+    def detect_stuck_ghost(self, ghost):
+        """Detect if ghost is stuck in a loop or confined area"""
+        if len(ghost['position_history']) < 6:
+            return False
+            
+        history = ghost['position_history']
+        
+        # Check for small loops (2-4 positions)
+        for loop_size in range(2, min(5, len(history)//2 + 1)):
+            if len(history) >= loop_size * 2:
+                recent_pattern = history[-loop_size:]
+                previous_pattern = history[-loop_size*2:-loop_size]
+                if recent_pattern == previous_pattern:
+                    return True
+        
+        # Check if ghost hasn't moved much (confined area)
+        if ghost['stuck_counter'] > 12:
+            return True
+            
+        # Check if ghost is oscillating between few positions
+        unique_positions = set(history[-10:])
+        if len(unique_positions) <= 2 and len(history) >= 8:
+            return True
+            
+        # Enhanced back-and-forth detection (main issue)
+        if len(history) >= 6:
+            # Check for A->B->A->B->A->B pattern (ping-pong movement)
+            positions = history[-6:]
+            if (positions[0] == positions[2] == positions[4] and 
+                positions[1] == positions[3] == positions[5] and
+                positions[0] != positions[1]):
+                return True
+        
+        # Check for recent reversal pattern (going back and forth on same path)
+        if len(history) >= 4:
+            # If last 4 moves are just 2 positions alternating
+            recent_4 = history[-4:]
+            if len(set(recent_4)) == 2 and recent_4[0] == recent_4[2] and recent_4[1] == recent_4[3]:
+                return True
+        
+        return False
+
+    def get_anti_stuck_direction(self, ghost, valid_directions, current_pos):
+        """Get direction to escape stuck situation using pathfinding"""
+        if not valid_directions:
+            return random.choice([[0, -1], [0, 1], [-1, 0], [1, 0]])
+        
+        # Try to find a path to a distant safe location
+        current_row, current_col = current_pos
+        
+        # Choose a target far from current position and recent history
+        best_target = None
+        best_distance = 0
+        
+        # Try several potential targets
+        for attempt in range(5):
+            # Pick a random distant location
+            target_row = random.randint(1, self.maze_gen.height - 2)
+            target_col = random.randint(1, self.maze_gen.width - 2)
+            
+            # Check if it's a valid path and far enough
+            if self.is_valid_position(target_col, target_row):
+                distance = abs(target_row - current_row) + abs(target_col - current_col)
+                if distance > best_distance and distance > 5:  # At least 5 blocks away
+                    # Check if this target is not in recent history
+                    target_pos = (target_row, target_col)
+                    if target_pos not in ghost['position_history'][-15:]:  # Not visited recently
+                        best_target = (target_row, target_col)
+                        best_distance = distance
+        
+        if best_target:
+            # Use Dijkstra to find path to target
+            path, distance = self.dijkstra.shortest_path(current_pos, best_target)
+            if path and len(path) > 1:
+                next_pos = path[1]
+                direction = [next_pos[1] - current_col, next_pos[0] - current_row]
+                if direction in valid_directions:
+                    return direction
+        
+        # Fallback: choose direction that leads to unexplored area
+        best_direction = random.choice(valid_directions)
+        max_distance = 0
+        
+        for direction in valid_directions:
+            target_row = current_row + direction[1]
+            target_col = current_col + direction[0]
+            target_pos = (target_row, target_col)
+            
+            # Calculate distance to nearest recent position
+            min_recent_distance = float('inf')
+            for recent_pos in ghost['position_history'][-10:]:
+                dist = abs(target_row - recent_pos[0]) + abs(target_col - recent_pos[1])
+                min_recent_distance = min(min_recent_distance, dist)
+            
+            if min_recent_distance > max_distance:
+                max_distance = min_recent_distance
+                best_direction = direction
+        
+        return best_direction
+
+    def get_random_direction(self, ghost, valid_directions):
+        """Get random direction with enhanced randomness"""
+        if not valid_directions:
+            return random.choice([[0, -1], [0, 1], [-1, 0], [1, 0]])
+        
+        # 70% pure random, 30% weighted towards unexplored directions
+        if random.random() < 0.7:
+            return random.choice(valid_directions)
+        else:
+            # Weight towards directions leading to less visited areas
+            current_row = int(round(ghost['pos'][1]))
+            current_col = int(round(ghost['pos'][0]))
+            
+            best_direction = random.choice(valid_directions)
+            max_score = 0
+            
+            for direction in valid_directions:
+                target_row = current_row + direction[1]
+                target_col = current_col + direction[0]
+                target_pos = (target_row, target_col)
+                
+                # Score based on how recently this area was visited
+                score = 10  # Base score
+                if target_pos in ghost['position_history']:
+                    # Reduce score based on recency
+                    last_visit_index = len(ghost['position_history']) - ghost['position_history'][::-1].index(target_pos) - 1
+                    recency_penalty = (len(ghost['position_history']) - last_visit_index) / len(ghost['position_history'])
+                    score -= recency_penalty * 5
+                
+                if score > max_score:
+                    max_score = score
+                    best_direction = direction
+            
+            return best_direction
 
     def toggle_auto_mode(self):
         """Toggle between manual and automatic Pacman control"""
@@ -717,10 +1181,13 @@ class PacmanGame:
     def draw_auto_path(self):
         """Draw the auto path for visualization"""
         if self.show_auto_path and self.auto_path:
-            for pos in self.auto_path[:10]:  # Show first 10 steps
+            for i, pos in enumerate(self.auto_path[:15]):  # Show first 15 steps
                 row, col = pos
                 center = ((col + 0.5) * self.cell_size, (row + 0.5) * self.cell_size)
-                pygame.draw.circle(self.screen, (0, 255, 255), center, 3)  # Cyan dots for auto path
+                # Make path more visible with gradient effect
+                alpha = max(50, 255 - i * 15)  # Fade effect
+                color = (0, min(255, alpha), min(255, alpha))  # Cyan with fading
+                pygame.draw.circle(self.screen, color, center, 4)  # Larger dots
 
     def is_wall(self, col, row):
         """Check if position is a wall - STRICT VERSION"""
@@ -776,6 +1243,16 @@ class PacmanGame:
                 else:
                     self.reset_positions()
 
+        # Check exit gate collision (WIN CONDITION)
+        if hasattr(self, 'exit_gate'):
+            gate_row, gate_col = self.exit_gate
+            gate_center = ((gate_col + 0.5) * self.cell_size, (gate_row + 0.5) * self.cell_size)
+            gate_distance = math.hypot(pacman_center[0] - gate_center[0], 
+                                     pacman_center[1] - gate_center[1])
+            if gate_distance < 20:  # Slightly larger than ghost collision
+                self.game_state = "level_complete"
+                self.score += 1000  # Bonus for completing level
+
         # Check win condition
         if not self.dots and not self.power_pellets:
             self.level += 1
@@ -829,27 +1306,25 @@ class PacmanGame:
         # Randomly shuffle safe positions
         random.shuffle(safe_positions)
         
-        # Place ghosts at random safe positions
+        # Place ghosts at valid center position and let them spread out
+        center_row = self.maze_gen.height // 2
+        center_col = self.maze_gen.width // 2
+        ghost_start_pos = self.find_valid_ghost_start_position(center_row, center_col)
+        
         for i, ghost in enumerate(self.ghosts[:4]):  # Ensure only 4 ghosts
-            if i < len(safe_positions):
-                ghost['pos'] = safe_positions[i][:]
-            else:
-                # Fallback: place at center if no safe position
-                ghost['pos'] = [float(self.maze_gen.width // 2), float(self.maze_gen.height // 2)]
+            # All ghosts start at the same valid center position
+            ghost['pos'] = [float(ghost_start_pos[1]), float(ghost_start_pos[0])]  # [col, row] format
             
             # Reset ghost state
             ghost['direction'] = [0, 0]
-            ghost['mode'] = 'scatter'  # Start in scatter mode for safety
+            ghost['mode'] = 'random'  # Start in random mode to spread out
             ghost['target'] = None
             ghost['last_direction_change'] = 0
-            
-            # Verify ghost position is valid
-            if not self.is_valid_position(ghost['pos'][0], ghost['pos'][1]):
-                # Find nearest valid position
-                for pos in all_valid_positions:
-                    if self.is_valid_position(pos[0], pos[1]):
-                        ghost['pos'] = pos[:]
-                        break
+            ghost['position_history'] = []
+            ghost['stuck_counter'] = 0
+            ghost['last_position'] = None
+            ghost['random_timer'] = 0
+            ghost['spread_timer'] = 0
 
     def handle_events(self):
         """Handle user input"""
@@ -865,8 +1340,11 @@ class PacmanGame:
                     self.toggle_auto_mode()
                 elif event.key == pygame.K_h:
                     self.show_auto_path = not self.show_auto_path
+                    print(f"🔍 Auto path visualization: {'ON' if self.show_auto_path else 'OFF'}")
                 elif event.key == pygame.K_r:
                     self.restart_game()
+                elif event.key == pygame.K_n and self.game_state == "level_complete":
+                    self.next_level()
                 elif self.game_state == "playing":
                     if event.key == pygame.K_UP:
                         self.pacman_next_direction = [0, -1]
@@ -896,6 +1374,14 @@ class PacmanGame:
         
         self.reset_positions()
 
+    def next_level(self):
+        """Advance to the next level"""
+        self.level += 1
+        self.game_state = "playing"
+        self.generate_level()
+        self.place_dots_and_pellets()
+        self.reset_positions()
+
     def update(self):
         """Update game state"""
         current_time = pygame.time.get_ticks()
@@ -921,6 +1407,7 @@ class PacmanGame:
         self.screen.fill(self.BLACK)
         self.draw_maze()
         self.draw_dots_and_pellets()
+        self.draw_exit_gate()  # Draw exit gate
         self.draw_auto_path()  # Draw auto path if enabled
         self.draw_pacman()
         self.draw_ghosts()

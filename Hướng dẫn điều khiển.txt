@@ -1,0 +1,43 @@
+🎮 Hướng dẫn điều khiển
+Điều khiển cơ bản:
+    ⬆️⬇️⬅️➡️ Phím mũi tên: Di chuyển Pacman
+    ⏸️ P: Tạm dừng/Tiếp tục game
+    🔄 R: Chơi lại từ đầu
+    ❌ Escape: Thoát game
+Chế độ nâng cao:
+    🤖 A: Bật/Tắt chế độ tự động (Pacman tự chơi)
+    👁️ H: Hiển thị/Ẩn đường đi tự động (chấm xanh dương)
+⚙️ Thông số kỹ thuật
+    Cấu hình game
+        Kích thước mê cung: 28x31 cells (chuẩn Pacman)
+        Kích thước cell: 20x20 pixels
+        Kích thước màn hình: 560x640 pixels
+        Tốc độ Pacman: 2 cells/giây
+        Tốc độ Ma: 1.5 cells/giây
+        Số mạng sống: 3
+        Điểm chấm nhỏ: 10 điểm
+        Điểm Power Pellet: 50 điểm
+    Thuật toán
+        Tạo mê cung: Randomized Depth-First Search (DFS)
+        Tìm đường: Dijkstra với A* optimization
+        AI Ma: Chiến lược Chase/Scatter với chuyển đổi ngẫu nhiên
+        AI Pacman: Tự động tìm điểm gần nhất, tránh ma trong phạm vi 3 cells
+        Collision Detection: Kiểm tra va chạm chính xác
+        Animation: 60 FPS với interpolation mượt mà
+    Màu sắc và ký hiệu
+        🟦 Màu xanh: Tường/vật cản (maze[row,col] = 1)
+        ⬜ Màu đen: Đường đi (maze[row,col] = 0)
+        🟡 Pacman: Nhân vật chính với animation miệng
+        🔴 Blinky: Ma đỏ (chase mode - đuổi theo Pacman)
+        🩷 Pinky: Ma hồng (scatter mode - chạy về góc trên trái)
+        🔵 Inky: Ma xanh (scatter mode - chạy về góc dưới phải)
+        🟠 Clyde: Ma cam (scatter mode - chạy về góc dưới trái)
+        ⚪ Chấm ăn nhỏ: 10 điểm mỗi cái
+        ⚪ Power Pellet: 50 điểm, kích hoạt chế độ đặc biệt (dự kiến)
+        🔵 Đường đi tự động: Chấm xanh dương hiển thị khi bật H
+🎯 Mục tiêu game
+    Ăn hết tất cả chấm ăn để qua cấp độ tiếp theo
+    Tránh các con ma - nếu chạm vào sẽ mất 1 mạng
+    Tích lũy điểm số cao nhất có thể
+    Hoàn thành nhiều cấp độ nhất có thể
+    Khám phá chế độ tự động để xem AI chơi như thế nào
