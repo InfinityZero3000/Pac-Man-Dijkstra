@@ -32,6 +32,9 @@ class PacmanGame:
         self.ORANGE = (255, 165, 0)
         self.DARK_BLUE = (0, 0, 139)
 
+        # Load ghost images
+        self.load_ghost_images()
+
         # Game state
         self.running = True
         self.game_state = "playing"  # playing, paused, game_over, level_complete
@@ -99,6 +102,42 @@ class PacmanGame:
             return False
         return True
 
+    def load_ghost_images(self):
+        """Load ghost images from public folder"""
+        self.ghost_images = {}
+        
+        # Load ghost images for each color (0-3)
+        ghost_colors = ['0', '1', '2', '3']  # red, pink, cyan, orange
+        
+        for i, color in enumerate(ghost_colors):
+            # Load right-facing (0) and left-facing (1) images
+            try:
+                self.ghost_images[f'ghost{i}_right'] = pygame.image.load(f'public/ghost{color}_0.png').convert_alpha()
+                self.ghost_images[f'ghost{i}_left'] = pygame.image.load(f'public/ghost{color}_1.png').convert_alpha()
+            except pygame.error as e:
+                print(f"Warning: Could not load ghost{color} images: {e}")
+                # Fallback to colored rectangles if images fail to load
+                self.ghost_images[f'ghost{i}_right'] = None
+                self.ghost_images[f'ghost{i}_left'] = None
+        
+        # Load scared ghost images
+        try:
+            self.ghost_images['ghost_scared_right'] = pygame.image.load('public/ghostScared_0.png').convert_alpha()
+            self.ghost_images['ghost_scared_left'] = pygame.image.load('public/ghostScared_1.png').convert_alpha()
+        except pygame.error as e:
+            print(f"Warning: Could not load scared ghost images: {e}")
+            self.ghost_images['ghost_scared_right'] = None
+            self.ghost_images['ghost_scared_left'] = None
+        
+        # Load eyes images
+        try:
+            self.ghost_images['eyes_right'] = pygame.image.load('public/eyes0.png').convert_alpha()
+            self.ghost_images['eyes_left'] = pygame.image.load('public/eyes1.png').convert_alpha()
+        except pygame.error as e:
+            print(f"Warning: Could not load eyes images: {e}")
+            self.ghost_images['eyes_right'] = None
+            self.ghost_images['eyes_left'] = None
+
     def calculate_exit_gate_position(self):
         """Calculate the exit gate position at the opposite corner from Pacman start"""
         start_row, start_col = self.start
@@ -132,14 +171,53 @@ class PacmanGame:
         """Place dots and power pellets on the maze"""
         self.dots = []
         self.power_pellets = []
-
+        
+        # First, collect all valid positions (open paths)
+        valid_positions = []
+        for y in range(self.maze_gen.height):
+            for x in range(self.maze_gen.width):
+                if self.maze[y, x] == 0:  # Open path
+                    # Skip start and goal positions
+                    if not ((y, x) == self.start or (y, x) == self.goal):
+                        valid_positions.append((x, y))
+        
+        # Randomly select positions for power pellets with minimum distance constraint
+        power_pellet_positions = []
+        min_distance = 8  # Minimum distance between power pellets
+        max_pellets = 12  # Maximum number of power pellets
+        attempts = 0
+        max_attempts = 1000
+        
+        while len(power_pellet_positions) < max_pellets and attempts < max_attempts:
+            attempts += 1
+            # Pick a random position
+            if not valid_positions:
+                break
+            
+            candidate = random.choice(valid_positions)
+            x, y = candidate
+            
+            # Check if this position is far enough from existing power pellets
+            is_valid = True
+            for px, py in power_pellet_positions:
+                distance = math.sqrt((x - px)**2 + (y - py)**2)
+                if distance < min_distance:
+                    is_valid = False
+                    break
+            
+            if is_valid:
+                power_pellet_positions.append(candidate)
+                # Remove nearby positions from valid_positions to speed up search
+                valid_positions = [pos for pos in valid_positions 
+                                 if math.sqrt((pos[0] - x)**2 + (pos[1] - y)**2) >= min_distance]
+        
+        # Place dots and power pellets
         for y in range(self.maze_gen.height):
             for x in range(self.maze_gen.width):
                 if self.maze[y, x] == 0:  # Open path
                     center = ((x + 0.5) * self.cell_size, (y + 0.5) * self.cell_size)
-
-                    # Place power pellets at corners
-                    if (x in [1, self.maze_gen.width-2] and y in [1, self.maze_gen.height-2]):
+                    
+                    if (x, y) in power_pellet_positions:
                         self.power_pellets.append(center)
                     else:
                         # Place regular dots everywhere except start and goal
@@ -181,7 +259,9 @@ class PacmanGame:
                 'stuck_counter': 0,  # Count consecutive moves to same area
                 'last_position': None,  # Last position for detecting loops
                 'random_timer': 0,  # Timer for random mode duration
-                'spread_timer': 0  # Timer to ensure ghosts spread from center
+                'spread_timer': 0,  # Timer to ensure ghosts spread from center
+                'scared': False,  # Whether ghost is frightened
+                'scared_timer': 0  # Timer for scared state duration
             }
             self.ghosts.append(ghost)
 
@@ -286,28 +366,63 @@ class PacmanGame:
             ])
 
     def draw_ghosts(self):
-        """Draw ghosts with simple animation"""
+        """Draw ghosts using images from public folder"""
         for ghost in self.ghosts:
             col, row = ghost['pos']
             center = (col * self.cell_size + self.cell_size // 2,
                      row * self.cell_size + self.cell_size // 2)
 
-            # Ghost body (rounded rectangle)
-            body_rect = pygame.Rect(center[0] - self.cell_size // 2 + 2,
-                                  center[1] - self.cell_size // 2 + 2,
-                                  self.cell_size - 4, self.cell_size - 4)
-            pygame.draw.rect(self.screen, ghost['color'], body_rect, border_radius=5)
+            # Determine direction for image selection
+            direction = ghost['direction']
+            facing_right = direction[0] > 0 or (direction[0] == 0 and direction[1] == 0)  # Default to right if stationary
+            
+            # Get ghost index (0-3) based on color
+            ghost_index = 0
+            if ghost['color'] == self.PINK:
+                ghost_index = 1
+            elif ghost['color'] == self.CYAN:
+                ghost_index = 2
+            elif ghost['color'] == self.ORANGE:
+                ghost_index = 3
+            
+            # Select appropriate image
+            if ghost.get('scared', False):
+                # Use scared ghost image
+                image_key = 'ghost_scared_right' if facing_right else 'ghost_scared_left'
+            else:
+                # Use normal ghost image
+                image_key = f'ghost{ghost_index}_right' if facing_right else f'ghost{ghost_index}_left'
+            
+            ghost_image = self.ghost_images.get(image_key)
+            
+            if ghost_image:
+                # Scale image to fit cell size
+                scaled_image = pygame.transform.scale(ghost_image, (self.cell_size, self.cell_size))
+                # Position image centered on ghost position
+                image_rect = scaled_image.get_rect(center=center)
+                self.screen.blit(scaled_image, image_rect)
+            else:
+                # Fallback to original drawing if image not available
+                self.draw_ghost_fallback(ghost, center)
 
-            # Ghost eyes
-            eye_size = 4
-            eye_y = center[1] - 3
-            left_eye = (center[0] - 6, eye_y)
-            right_eye = (center[0] + 6, eye_y)
+    def draw_ghost_fallback(self, ghost, center):
+        """Fallback drawing method when images are not available"""
+        # Ghost body (rounded rectangle)
+        body_rect = pygame.Rect(center[0] - self.cell_size // 2 + 2,
+                              center[1] - self.cell_size // 2 + 2,
+                              self.cell_size - 4, self.cell_size - 4)
+        pygame.draw.rect(self.screen, ghost['color'], body_rect, border_radius=5)
 
-            pygame.draw.circle(self.screen, self.WHITE, left_eye, eye_size)
-            pygame.draw.circle(self.screen, self.WHITE, right_eye, eye_size)
-            pygame.draw.circle(self.screen, self.BLACK, left_eye, 2)
-            pygame.draw.circle(self.screen, self.BLACK, right_eye, 2)
+        # Ghost eyes
+        eye_size = 4
+        eye_y = center[1] - 3
+        left_eye = (center[0] - 6, eye_y)
+        right_eye = (center[0] + 6, eye_y)
+
+        pygame.draw.circle(self.screen, self.WHITE, left_eye, eye_size)
+        pygame.draw.circle(self.screen, self.WHITE, right_eye, eye_size)
+        pygame.draw.circle(self.screen, self.BLACK, left_eye, 2)
+        pygame.draw.circle(self.screen, self.BLACK, right_eye, 2)
 
     def draw_ui(self):
         """Draw game UI"""
@@ -1241,7 +1356,10 @@ class PacmanGame:
             if distance < 10:
                 self.power_pellets.remove(pellet)
                 self.score += 50
-                # Make ghosts frightened (future feature)
+                # Make all ghosts frightened for 10 seconds
+                for ghost in self.ghosts:
+                    ghost['scared'] = True
+                    ghost['scared_timer'] = 600  # 10 seconds at 60 FPS
 
         # Check ghosts
         for ghost in self.ghosts:
@@ -1250,11 +1368,21 @@ class PacmanGame:
             distance = math.hypot(pacman_center[0] - ghost_center[0],
                                 pacman_center[1] - ghost_center[1])
             if distance < 15:
-                self.lives -= 1
-                if self.lives <= 0:
-                    self.game_state = "game_over"
+                if ghost.get('scared', False):
+                    # Eat scared ghost for points
+                    self.score += 200
+                    print(f"👻 Ate {ghost['name']} ghost! +200 points")
+                    # Reset ghost position
+                    ghost['pos'] = [float(self.start[1]), float(self.start[0])]
+                    ghost['scared'] = False
+                    ghost['scared_timer'] = 0
                 else:
-                    self.reset_positions()
+                    # Normal ghost collision - lose life
+                    self.lives -= 1
+                    if self.lives <= 0:
+                        self.game_state = "game_over"
+                    else:
+                        self.reset_positions()
 
         # Check exit gate collision (WIN CONDITION)
         if hasattr(self, 'exit_gate'):
@@ -1410,6 +1538,14 @@ class PacmanGame:
                 
             self.move_ghosts()
             self.check_collisions()
+
+            # Update ghost scared timers
+            for ghost in self.ghosts:
+                if ghost.get('scared', False):
+                    ghost['scared_timer'] -= 1
+                    if ghost['scared_timer'] <= 0:
+                        ghost['scared'] = False
+                        ghost['scared_timer'] = 0
 
             # Animate Pacman mouth
             self.animation_timer += 1
