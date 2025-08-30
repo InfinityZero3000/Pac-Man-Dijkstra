@@ -2,7 +2,7 @@ import random
 import numpy as np
 
 class MazeGenerator:
-    def __init__(self, width=51, height=41, complexity=0.75):
+    def __init__(self, width=51, height=41, complexity=0.5):
         self.width = width if width % 2 == 1 else width + 1  # Ensure odd size
         self.height = height if height % 2 == 1 else height + 1
         self.complexity = complexity  # Controls how many paths are created (0.5-1.0)
