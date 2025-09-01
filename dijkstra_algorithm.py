@@ -192,7 +192,312 @@ class DijkstraAlgorithm:
         }
         return None, float('inf')
 
-    def advanced_pathfinding_with_multi_objectives(self, start, objectives, ghost_positions, 
+    def shortest_path_with_bomb_avoidance(self, start, goal, bomb_positions=None, cell_size=23, bomb_positions_are_grid=True, enable_logging=True):
+        """A*/Dijkstra on grid with bomb avoidance - bombs are treated as walls"""
+        self.last_run_stats = None
+        if not self._validate_positions(start, goal):
+            self.last_run_stats = {
+                'nodes_explored': 0,
+                'computation_time_ms': 0.0,
+                'success': False,
+            }
+            return None, float('inf')
+
+        # Convert bomb positions to grid coordinates if needed
+        bomb_set = set()
+        if bomb_positions:
+            if bomb_positions_are_grid:
+                bomb_set = set(bomb_positions)
+            else:
+                for bomb in bomb_positions:
+                    bomb_x, bomb_y = bomb
+                    # Convert screen center to maze grid position
+                    col = round(bomb_x / cell_size - 0.5)
+                    row = round(bomb_y / cell_size - 0.5)
+                    if 0 <= row < self.maze_gen.height and 0 <= col < self.maze_gen.width:
+                        bomb_set.add((int(row), int(col)))
+
+        pq = []  # (f, g, node, path)
+        h0 = self._heuristic(start, goal) if getattr(config, 'USE_ASTAR', False) else 0
+        heapq.heappush(pq, (h0, 0, start, [start]))
+
+        dist = {start: 0}
+        visited = set()
+        prev = {start: None}
+
+        explored = 0
+        t0 = datetime.now()
+
+        while pq:
+            f, g, node, path = heapq.heappop(pq)
+            if node in visited:
+                continue
+            visited.add(node)
+            explored += 1
+
+            if node == goal:
+                dt_ms = (datetime.now() - t0).total_seconds() * 1000
+                
+                # Strict validation: remove any wall or bomb positions from path
+                clean_path = []
+                for pos in path:
+                    row, col = pos
+                    if (0 <= row < self.maze_gen.height and 
+                        0 <= col < self.maze_gen.width and 
+                        self.maze_gen.maze[row, col] == 0 and  # Only open paths
+                        pos not in bomb_set):  # Avoid bombs
+                        clean_path.append(pos)
+                
+                if not clean_path:
+                    if enable_logging:
+                        self._log_error('INVALID_PATH_BOMB_AVOIDANCE', {'start': start, 'goal': goal, 'path': path, 'distance': g, 'bombs': list(bomb_set)})
+                    self.last_run_stats = {
+                        'nodes_explored': explored,
+                        'computation_time_ms': dt_ms,
+                        'success': False,
+                    }
+                    return None, float('inf')
+                
+                if enable_logging:
+                    self._log_successful_path_bomb_avoidance(start, goal, clean_path, g, explored, dt_ms, list(bomb_set))
+                self.last_run_stats = {
+                    'nodes_explored': explored,
+                    'computation_time_ms': dt_ms,
+                    'success': True,
+                }
+                return clean_path, len(clean_path) - 1  # Return step count as distance
+
+            if g > dist.get(node, float('inf')):
+                continue
+
+            for nb in self._get_valid_neighbors_with_bomb_avoidance(node, bomb_set):
+                ng = g + self._calculate_move_cost(node, nb)
+                if ng < dist.get(nb, float('inf')):
+                    dist[nb] = ng
+                    prev[nb] = node
+                    npath = path + [nb]
+                    nf = ng + (self._heuristic(nb, goal) if getattr(config, 'USE_ASTAR', False) else 0)
+                    heapq.heappush(pq, (nf, ng, nb, npath))
+
+        if enable_logging:
+            self._log_error('GOAL_UNREACHABLE_BOMB_AVOIDANCE', {'start': start, 'goal': goal, 'nodes_explored': explored, 'bombs': list(bomb_set)})
+        self.last_run_stats = {
+            'nodes_explored': explored,
+            'computation_time_ms': (datetime.now() - t0).total_seconds() * 1000,
+            'success': False,
+        }
+        return None, float('inf')
+
+    def shortest_path_with_bomb_penalty(self, start, goal, bomb_positions=None, bomb_penalty=50, enable_logging=True):
+        """A*/Dijkstra with bomb penalty instead of complete avoidance"""
+        self.last_run_stats = None
+        if not self._validate_positions(start, goal):
+            self.last_run_stats = {
+                'nodes_explored': 0,
+                'computation_time_ms': 0.0,
+                'success': False,
+            }
+            return None, float('inf')
+
+        # Convert bomb positions to set for fast lookup
+        bomb_set = set()
+        if bomb_positions:
+            bomb_set = set(bomb_positions)
+
+        pq = []  # (f, g, node, path)
+        h0 = self._heuristic(start, goal) if getattr(config, 'USE_ASTAR', False) else 0
+        heapq.heappush(pq, (h0, 0, start, [start]))
+
+        dist = {start: 0}
+        visited = set()
+        prev = {start: None}
+
+        explored = 0
+        t0 = datetime.now()
+
+        while pq:
+            f, g, node, path = heapq.heappop(pq)
+            if node in visited:
+                continue
+            visited.add(node)
+            explored += 1
+
+            if node == goal:
+                dt_ms = (datetime.now() - t0).total_seconds() * 1000
+                
+                # Clean path validation
+                clean_path = []
+                for pos in path:
+                    row, col = pos
+                    if (0 <= row < self.maze_gen.height and 
+                        0 <= col < self.maze_gen.width and 
+                        self.maze_gen.maze[row, col] == 0):
+                        clean_path.append(pos)
+                
+                if not clean_path:
+                    if enable_logging:
+                        self._log_error('INVALID_PATH_BOMB_PENALTY', {'start': start, 'goal': goal, 'path': path, 'distance': g})
+                    self.last_run_stats = {
+                        'nodes_explored': explored,
+                        'computation_time_ms': dt_ms,
+                        'success': False,
+                    }
+                    return None, float('inf')
+                
+                if enable_logging:
+                    self._log_successful_path_bomb_penalty(start, goal, clean_path, g, explored, dt_ms, list(bomb_set))
+                self.last_run_stats = {
+                    'nodes_explored': explored,
+                    'computation_time_ms': dt_ms,
+                    'success': True,
+                }
+                return clean_path, len(clean_path) - 1
+
+            if g > dist.get(node, float('inf')):
+                continue
+
+            for nb in self._get_valid_neighbors(node):
+                # Calculate move cost with bomb penalty
+                base_cost = self._calculate_move_cost(node, nb)
+                bomb_cost = bomb_penalty if nb in bomb_set else 0
+                ng = g + base_cost + bomb_cost
+                
+                if ng < dist.get(nb, float('inf')):
+                    dist[nb] = ng
+                    prev[nb] = node
+                    npath = path + [nb]
+                    nf = ng + (self._heuristic(nb, goal) if getattr(config, 'USE_ASTAR', False) else 0)
+                    heapq.heappush(pq, (nf, ng, nb, npath))
+
+        if enable_logging:
+            self._log_error('GOAL_UNREACHABLE_BOMB_PENALTY', {'start': start, 'goal': goal, 'nodes_explored': explored, 'bombs': list(bomb_set)})
+        self.last_run_stats = {
+            'nodes_explored': explored,
+            'computation_time_ms': (datetime.now() - t0).total_seconds() * 1000,
+            'success': False,
+        }
+        return None, float('inf')
+
+    def shortest_path_with_bomb_radius_avoidance(self, start, goal, bomb_positions=None, avoidance_radius=2, enable_logging=True):
+        """A*/Dijkstra with bomb avoidance radius - penalizes positions near bombs"""
+        self.last_run_stats = None
+        if not self._validate_positions(start, goal):
+            self.last_run_stats = {
+                'nodes_explored': 0,
+                'computation_time_ms': 0.0,
+                'success': False,
+            }
+            return None, float('inf')
+
+        # Create bomb danger zones
+        danger_zones = {}
+        if bomb_positions:
+            for bomb in bomb_positions:
+                bomb_row, bomb_col = bomb
+                for dr in range(-avoidance_radius, avoidance_radius + 1):
+                    for dc in range(-avoidance_radius, avoidance_radius + 1):
+                        r, c = bomb_row + dr, bomb_col + dc
+                        if (0 <= r < self.maze_gen.height and 
+                            0 <= c < self.maze_gen.width and
+                            self.maze_gen.maze[r, c] == 0):  # Only penalize valid paths
+                            distance = abs(dr) + abs(dc)
+                            if distance <= avoidance_radius and distance > 0:  # Don't penalize bomb itself if it's a wall
+                                penalty = max(1, avoidance_radius - distance + 1) * 10  # Higher penalty closer to bomb
+                                danger_zones[(r, c)] = penalty
+
+        pq = []  # (f, g, node, path)
+        h0 = self._heuristic(start, goal) if getattr(config, 'USE_ASTAR', False) else 0
+        heapq.heappush(pq, (h0, 0, start, [start]))
+
+        dist = {start: 0}
+        visited = set()
+        prev = {start: None}
+
+        explored = 0
+        t0 = datetime.now()
+
+        while pq:
+            f, g, node, path = heapq.heappop(pq)
+            if node in visited:
+                continue
+            visited.add(node)
+            explored += 1
+
+            if node == goal:
+                dt_ms = (datetime.now() - t0).total_seconds() * 1000
+                
+                # Clean path validation
+                clean_path = []
+                for pos in path:
+                    row, col = pos
+                    if (0 <= row < self.maze_gen.height and 
+                        0 <= col < self.maze_gen.width and 
+                        self.maze_gen.maze[row, col] == 0):
+                        clean_path.append(pos)
+                
+                if not clean_path:
+                    if enable_logging:
+                        self._log_error('INVALID_PATH_BOMB_RADIUS', {'start': start, 'goal': goal, 'path': path, 'distance': g})
+                    self.last_run_stats = {
+                        'nodes_explored': explored,
+                        'computation_time_ms': dt_ms,
+                        'success': False,
+                    }
+                    return None, float('inf')
+                
+                if enable_logging:
+                    self._log_successful_path_bomb_radius(start, goal, clean_path, g, explored, dt_ms, list(bomb_positions) if bomb_positions else [])
+                self.last_run_stats = {
+                    'nodes_explored': explored,
+                    'computation_time_ms': dt_ms,
+                    'success': True,
+                }
+                return clean_path, len(clean_path) - 1
+
+            if g > dist.get(node, float('inf')):
+                continue
+
+            for nb in self._get_valid_neighbors(node):
+                # Calculate move cost with bomb radius penalty
+                base_cost = self._calculate_move_cost(node, nb)
+                danger_penalty = danger_zones.get(nb, 0)
+                ng = g + base_cost + danger_penalty
+                
+                if ng < dist.get(nb, float('inf')):
+                    dist[nb] = ng
+                    prev[nb] = node
+                    npath = path + [nb]
+                    nf = ng + (self._heuristic(nb, goal) if getattr(config, 'USE_ASTAR', False) else 0)
+                    heapq.heappush(pq, (nf, ng, nb, npath))
+
+        if enable_logging:
+            self._log_error('GOAL_UNREACHABLE_BOMB_RADIUS', {'start': start, 'goal': goal, 'nodes_explored': explored, 'bombs': list(bomb_positions) if bomb_positions else []})
+        self.last_run_stats = {
+            'nodes_explored': explored,
+            'computation_time_ms': (datetime.now() - t0).total_seconds() * 1000,
+            'success': False,
+        }
+        return None, float('inf')
+
+    def _log_successful_path_bomb_avoidance(self, start, goal, path, distance, explored, dt_ms, bomb_positions):
+        """Log successful path with bomb avoidance"""
+        log_entry = {
+            'timestamp': datetime.now().isoformat(),
+            'session_id': self.session_id,
+            'algorithm': 'Dijkstra_with_Bomb_Avoidance',
+            'start': start,
+            'goal': goal,
+            'path': path,
+            'distance': distance,
+            'nodes_explored': explored,
+            'computation_time_ms': dt_ms,
+            'bomb_positions': bomb_positions,
+            'success': True
+        }
+        self.log_data.append(log_entry)
+        self.run_history.append(log_entry)
+
+    def shortest_path_with_multi_objectives(self, start, objectives, ghost_positions, 
                                                    ghost_velocities=None, power_pellet_positions=None, 
                                                    dots_positions=None, exit_gate=None, enable_logging=True):
         """
@@ -727,6 +1032,12 @@ class DijkstraAlgorithm:
         # Use maze_generator's get_neighbors method directly
         return self.maze_gen.get_neighbors(pos)
 
+    def _get_valid_neighbors_with_bomb_avoidance(self, pos, bomb_set):
+        """Get valid neighbors while avoiding bomb positions"""
+        neighbors = self.maze_gen.get_neighbors(pos)
+        # Filter out bomb positions
+        return [nb for nb in neighbors if nb not in bomb_set]
+
     @staticmethod
     def _is_move_valid(a, b):
         dx, dy = b[0] - a[0], b[1] - a[1]
@@ -808,6 +1119,66 @@ class DijkstraAlgorithm:
         }
         self.log_data.append(entry)
 
+    def _log_successful_path_bomb_avoidance(self, start, goal, path, distance, nodes_explored, computation_time, bomb_positions):
+        """Log successful path with bomb avoidance"""
+        entry = {
+            'session_id': self.session_id,
+            'timestamp': datetime.now().isoformat(),
+            'type': 'SUCCESSFUL_PATH_BOMB_AVOIDANCE',
+            'maze_info': {
+                'size': f"{self.maze_gen.height}x{self.maze_gen.width}",
+                'maze_hash': self._get_maze_hash(),
+            },
+            'path_info': {
+                'start': start,
+                'goal': goal,
+                'path': path,
+                'distance': distance,
+                'path_length': len(path),
+                'nodes_explored': nodes_explored,
+                'computation_time_ms': computation_time,
+                'efficiency': len(path) / nodes_explored if nodes_explored > 0 else 0,
+                'bomb_positions': bomb_positions,
+            },
+            'validation': {
+                'path_valid': self._validate_path(path),
+                'no_wall_crossing': True,
+                'optimal_path': True,
+                'bomb_avoidance': True,
+            },
+        }
+        self.log_data.append(entry)
+
+    def _log_successful_path_bomb_penalty(self, start, goal, path, distance, nodes_explored, computation_time, bomb_positions):
+        """Log successful path with bomb penalty"""
+        entry = {
+            'session_id': self.session_id,
+            'timestamp': datetime.now().isoformat(),
+            'type': 'SUCCESSFUL_PATH_BOMB_PENALTY',
+            'maze_info': {
+                'size': f"{self.maze_gen.height}x{self.maze_gen.width}",
+                'maze_hash': self._get_maze_hash(),
+            },
+            'path_info': {
+                'start': start,
+                'goal': goal,
+                'path': path,
+                'distance': distance,
+                'path_length': len(path),
+                'nodes_explored': nodes_explored,
+                'computation_time_ms': computation_time,
+                'efficiency': len(path) / nodes_explored if nodes_explored > 0 else 0,
+                'bomb_positions': bomb_positions,
+            },
+            'validation': {
+                'path_valid': self._validate_path(path),
+                'no_wall_crossing': True,
+                'optimal_path': True,
+                'bomb_penalty': True,
+            },
+        }
+        self.log_data.append(entry)
+
     def _log_error(self, error_type, error_data):
         self.log_data.append({
             'session_id': self.session_id,
@@ -856,3 +1227,62 @@ class DijkstraAlgorithm:
             'goal_position': list(self.maze_gen.goal),
             'maze_pattern': self.maze_gen.maze.tolist(),
         }
+
+    def shortest_path_with_obstacles(self, start, goal, obstacles=None):
+        """Find shortest path while treating obstacles as walls"""
+        if obstacles is None:
+            obstacles = set()
+            
+        if not self._validate_positions(start, goal):
+            return None, float('inf')
+
+        pq = []  # (f, g, node, path)
+        h0 = self._heuristic(start, goal) if getattr(config, 'USE_ASTAR', False) else 0
+        heapq.heappush(pq, (h0, 0, start, [start]))
+
+        dist = {start: 0}
+        visited = set()
+
+        while pq:
+            f, g, current, path = heapq.heappop(pq)
+
+            if current in visited:
+                continue
+            visited.add(current)
+
+            if current == goal:
+                return path, g
+
+            row, col = current
+            neighbors = [
+                (row - 1, col), (row + 1, col),
+                (row, col - 1), (row, col + 1)
+            ]
+
+            for nr, nc in neighbors:
+                neighbor = (nr, nc)
+                
+                # Skip if out of bounds
+                if not (0 <= nr < self._height and 0 <= nc < self._width):
+                    continue
+                
+                # Skip if wall
+                if self.maze_gen.maze[nr, nc] == 1:
+                    continue
+                
+                # Skip if obstacle (bomb)
+                if neighbor in obstacles:
+                    continue
+                
+                if neighbor in visited:
+                    continue
+
+                new_cost = g + 1
+                if neighbor not in dist or new_cost < dist[neighbor]:
+                    dist[neighbor] = new_cost
+                    h = self._heuristic(neighbor, goal) if getattr(config, 'USE_ASTAR', False) else 0
+                    f = new_cost + h
+                    new_path = path + [neighbor]
+                    heapq.heappush(pq, (f, new_cost, neighbor, new_path))
+
+        return None, float('inf')
