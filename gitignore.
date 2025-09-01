@@ -4,3 +4,4 @@ scripts/
 .venv
 .env
 __pycache__
+DS_Store
