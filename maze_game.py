@@ -8,14 +8,30 @@ from dijkstra_algorithm import DijkstraAlgorithm
 import config
 
 class PacmanGame:
-    def __init__(self, width=51, height=31, cell_size=30):
-        self.maze_gen = MazeGenerator(width, height, complexity=0.25)  # Giảm độ phức tạp mê cung
+    def __init__(self, width=57, height=32, cell_size=30):
+        self.maze_gen = MazeGenerator(width, height, complexity=0.75)  # Độ phức tạp mê cung
         self.dijkstra = DijkstraAlgorithm(self.maze_gen)
         self.cell_size = cell_size
         self.screen_width = width * cell_size
         self.screen_height = (height + 3) * cell_size  # Extra space for UI
 
         pygame.init()
+        pygame.mixer.init()  # Initialize audio mixer
+        
+        # Load and play opening sound
+        try:
+            self.opening_sound = pygame.mixer.Sound('public/opening.wav')
+            self.opening_sound.play()
+        except pygame.error as e:
+            print(f"Warning: Could not load opening sound: {e}")
+            self.opening_sound = None
+        
+        # Load wakawaka sound for eating
+        try:
+            self.wakawaka_sound = pygame.mixer.Sound('public/wakaWaka.wav')
+        except pygame.error as e:
+            print(f"Warning: Could not load wakawaka sound: {e}")
+            self.wakawaka_sound = None
         
         # Setup signal handler for graceful shutdown
         def signal_handler(signum, frame):
@@ -57,7 +73,7 @@ class PacmanGame:
         self.pacman_pos = [14.0, 23.0]  # Temporary position, will be updated as floats
         self.pacman_direction = [0, 0]
         self.pacman_next_direction = [0, 0]
-        self.pacman_speed = 2
+        self.pacman_speed = config.PACMAN_LEGACY_SPEED  # Use config value
         self.pacman_animation = 1
         self.pacman_mouth_open = True
 
@@ -111,6 +127,7 @@ class PacmanGame:
 
         # Game timing
         self.last_update = pygame.time.get_ticks()
+        self.delta_time = 0  
         self.animation_timer = 0
         self.auto_update_timer = 0
 
@@ -261,7 +278,8 @@ class PacmanGame:
         """Place random bombs as obstacles on the maze - with pathfinding validation"""
         self.bombs = []
         
-        print(f"Mê cung {self.maze_gen.width}x{self.maze_gen.height}")
+        # Print maze size only once for debugging
+        # print(f"Mê cung {self.maze_gen.width}x{self.maze_gen.height}")
 
         # Collect all valid positions (open paths) tránh start/goal và tường
         valid_positions = []
@@ -278,28 +296,40 @@ class PacmanGame:
                     
                     # Đảm bảo bom cách xa start/goal ít nhất 3 ô
                     if start_dist > 3 and goal_dist > 3:
-                        # Kiểm tra bom không đặt ở ô có quá nhiều tường xung quanh
-                        if self.count_adjacent_walls(y, x) <= 2:  # Tối đa 2 tường xung quanh
-                            valid_positions.append((x, y))
+                        # Bom có thể đặt trên bất kỳ đường đi nào (đã kiểm tra maze[y,x] == 0)
+                        valid_positions.append((y, x))  # Store as (row, col) for consistency
 
-        print(f"Tìm được {len(valid_positions)} vị trí có thể đặt bom")
+        # print(f"Tìm được {len(valid_positions)} vị trí có thể đặt bom")
 
         if not valid_positions:
-            print("Không thể đặt bom nào!")
+            # print("Không thể đặt bom nào!")
             return
 
         # Thuật toán đặt bom với kiểm tra pathfinding
         bomb_positions = self.place_bombs_with_pathfinding_check(valid_positions, max_bombs=5)
         
-        print(f"Đặt thành công {len(bomb_positions)} quả bom (đảm bảo luôn có đường đi)")
+        # print(f"Đặt thành công {len(bomb_positions)} quả bom (đảm bảo luôn có đường đi)")
 
-        # Place bombs at selected positions
-        for x, y in bomb_positions:
+        # Place bombs at selected positions - with extra validation
+        valid_bomb_count = 0
+        for y, x in bomb_positions:  # bomb_positions now stores (row, col)
+            # Triple check this position is valid before placing bomb
+            if self.maze[y, x] != 0:
+                continue  # Skip silently
+            
+            # Check bounds
+            if not (0 <= y < self.maze_gen.height and 0 <= x < self.maze_gen.width):
+                continue  # Skip silently
+                
+            # Check if position is really a path (0) and not wall (1)
+            if self.maze[y, x] == 1:
+                continue  # Skip silently
+            
             center = ((x + 0.5) * self.cell_size, (y + 0.5) * self.cell_size)
             self.bombs.append(center)
-            start_dist = math.sqrt((x - self.start[1])**2 + (y - self.start[0])**2)
-            goal_dist = math.sqrt((x - self.goal[1])**2 + (y - self.goal[0])**2)
-            print(f"   Bom tại ({x}, {y}) - cách start: {start_dist:.1f}, cách goal: {goal_dist:.1f}")
+            valid_bomb_count += 1
+        
+        # print(f"Dat duoc {valid_bomb_count} qua bom tren duong di")
 
     def place_bombs_with_pathfinding_check(self, valid_positions, max_bombs=5):
         """Place bombs while ensuring path to goal remains available"""
@@ -310,20 +340,24 @@ class PacmanGame:
         # Kiểm tra đường đi ban đầu
         initial_path, initial_distance = self.dijkstra.shortest_path(self.start, self.goal)
         if not initial_path:
-            print("Không có đường đi ban đầu từ start đến goal!")
+            # print("Không có đường đi ban đầu từ start đến goal!")
             return []
         
-        print(f"Đường đi ban đầu: {initial_distance} bước")
+        # print(f"Đường đi ban đầu: {initial_distance} bước")
         
         for bomb_pos in remaining_positions:
             if len(selected_bombs) >= max_bombs:
                 break
                 
-            x, y = bomb_pos
+            y, x = bomb_pos  # Now bomb_pos is (row, col)
+            
+            # Extra validation: ensure this is still a valid path
+            if self.maze[y, x] != 0:
+                continue  # Skip silently
             
             # Kiểm tra khoảng cách với bom đã đặt (tối thiểu 4 ô)
             too_close = False
-            for bx, by in selected_bombs:
+            for by, bx in selected_bombs:  # selected_bombs now stores (row, col)
                 distance = math.sqrt((x - bx)**2 + (y - by)**2)
                 if distance < 4:  # Tối thiểu 4 ô giữa các bom
                     too_close = True
@@ -333,8 +367,8 @@ class PacmanGame:
                 continue
                 
             # Tạm thời đặt bom và kiểm tra pathfinding
-            temp_bombs = selected_bombs + [(x, y)]
-            temp_bomb_grid = set((by, bx) for bx, by in temp_bombs)  # Convert to (row, col)
+            temp_bombs = selected_bombs + [(y, x)]  # Add as (row, col)
+            temp_bomb_grid = set(temp_bombs)  # Already in (row, col) format
             
             # Kiểm tra xem vẫn có đường đi không
             path, distance = self.dijkstra.shortest_path_with_obstacles(
@@ -342,10 +376,11 @@ class PacmanGame:
             )
             
             if path and distance <= initial_distance * 2:  # Cho phép đường đi dài hơn tối đa 2 lần
-                selected_bombs.append((x, y))
-                print(f"Đặt bom tại ({x}, {y}) - đường đi còn {distance} bước")
+                selected_bombs.append((y, x))  # Store as (row, col)
+                # print(f"Đặt bom tại ({x}, {y}) - đường đi còn {distance} bước")
             else:
-                print(f"Bỏ qua ({x}, {y}) - sẽ chặn đường đi")
+                # print(f"Bỏ qua ({x}, {y}) - sẽ chặn đường đi")
+                pass
         
         return selected_bombs
 
@@ -391,14 +426,14 @@ class PacmanGame:
             else:
                 # Nếu không tìm được vị trí thỏa mãn, giảm min_distance và thử lại
                 min_distance = max(2, min_distance - 1)
-                print(f"Giảm khoảng cách xuống {min_distance} để tìm thêm vị trí...")
+                # print(f"Giảm khoảng cách xuống {min_distance} để tìm thêm vị trí...")
                 if min_distance < 2:
                     # Nếu vẫn không được, chọn ngẫu nhiên từ remaining
                     if remaining_positions and len(selected) < max_bombs:
                         selected.append(random.choice(remaining_positions))
                     break
         
-        print(f"Chọn được {len(selected)} vị trí bom (min_distance cuối: {min_distance})")
+        # print(f"Chọn được {len(selected)} vị trí bom (min_distance cuối: {min_distance})")
         return selected
 
     def count_adjacent_walls(self, y, x):
@@ -422,6 +457,14 @@ class PacmanGame:
             ny, nx = y + dy, x + dx
             if 0 <= ny < self.maze_gen.height and 0 <= nx < self.maze_gen.width:
                 if self.maze[ny, nx] == 1:  # Wall
+                    return False
+        return True
+
+    def is_at_least_distance_from_wall(self, y, x, min_distance=1):
+        """Check if position (y,x) is at least min_distance away from any wall"""
+        for check_y in range(max(0, y - min_distance), min(self.maze_gen.height, y + min_distance + 1)):
+            for check_x in range(max(0, x - min_distance), min(self.maze_gen.width, x + min_distance + 1)):
+                if self.maze[check_y, check_x] == 1:  # Tìm thấy tường trong phạm vi
                     return False
         return True
 
@@ -461,7 +504,7 @@ class PacmanGame:
                 'color': color,
                 'pos': [float(ghost_start_pos[1]), float(ghost_start_pos[0])],  # [col, row] format
                 'direction': [0, 0],
-                'speed': 1.2,  # Slightly slower than pacman
+                'speed': config.GHOST_SPEED,  # Use config value
                 'mode': 'random',  # Start in random mode to spread out
                 'target': None,
                 'animation': 1,
@@ -472,7 +515,9 @@ class PacmanGame:
                 'random_timer': 0,  # Timer for random mode duration
                 'spread_timer': 0,  # Timer to ensure ghosts spread from center
                 'scared': False,  # Whether ghost is frightened
-                'scared_timer': 0  # Timer for scared state duration
+                'scared_timer': 0,  # Timer for scared state duration
+                'eaten': False,  # Whether ghost has been eaten (shows only eyes)
+                'eaten_timer': 0  # Timer for eaten state duration
             }
             self.ghosts.append(ghost)
 
@@ -527,24 +572,24 @@ class PacmanGame:
 
     def draw_bombs(self):
         """Draw bombs as realistic bomb obstacles"""
-        for bomb in self.bombs:
+        for i, bomb in enumerate(self.bombs):
             bomb_x, bomb_y = bomb
             
-            # Bomb body colors
-            GRAY = (128, 128, 128)
-            DARK_GRAY = (64, 64, 64)
+            # Bomb body colors - make bombs more distinctive  
+            ORANGE = (255, 165, 0)  # Bright orange instead of gray
+            DARK_ORANGE = (200, 100, 0)
             WHITE = (255, 255, 255)
             RED = (255, 0, 0)
             
             # Draw bomb body with gradient effect
-            bomb_radius = 8
+            bomb_radius = 10  # Make slightly larger
             
             # Create gradient effect by drawing multiple circles of decreasing size
             for i in range(bomb_radius, 0, -1):
-                # Calculate color gradient from gray to dark gray
-                intensity = 128 - (i * 8)  # Decrease intensity towards center
-                intensity = max(32, min(128, intensity))  # Clamp between 32 and 128
-                color = (intensity, intensity, intensity)
+                # Calculate color gradient from orange to dark orange
+                intensity = 255 - (i * 15)  # Different gradient calculation
+                intensity = max(100, min(255, intensity))  # Clamp between 100 and 255
+                color = (intensity, intensity//2, 0)  # Orange gradient
                 
                 # Draw concentric circles for gradient effect
                 pygame.draw.circle(self.screen, color, (int(bomb_x), int(bomb_y)), i)
@@ -605,27 +650,30 @@ class PacmanGame:
         elif self.pacman_direction == [-1, 0]:  # Left
             mouth_angle = 180
         elif self.pacman_direction == [0, -1]:  # Up
-            mouth_angle = 90
-        elif self.pacman_direction == [0, 1]:  # Down
             mouth_angle = 270
+        elif self.pacman_direction == [0, 1]:  # Down
+            mouth_angle = 90
 
-        # Animate mouth
-        mouth_open_angle = 45 if self.pacman_mouth_open else 5
-
-        # Draw Pacman as a pie shape
-        pygame.draw.circle(self.screen, self.YELLOW, center, self.cell_size // 2 - 2)
-
-        if self.pacman_direction != [0, 0]:
-            # Draw mouth
+        mouth_open_angle = 45 if self.pacman_mouth_open else 1
+        pacman_radius = self.cell_size // 2 - 2
+        
+        if self.pacman_direction != [0, 0] and mouth_open_angle > 0:
+            pygame.draw.circle(self.screen, self.YELLOW, center, pacman_radius)
+            
             start_angle = math.radians(mouth_angle - mouth_open_angle)
             end_angle = math.radians(mouth_angle + mouth_open_angle)
+            
+            mouth_radius = pacman_radius + 5
+            
             pygame.draw.polygon(self.screen, self.BLACK, [
                 center,
-                (center[0] + math.cos(start_angle) * (self.cell_size // 2),
-                 center[1] + math.sin(start_angle) * (self.cell_size // 2)),
-                (center[0] + math.cos(end_angle) * (self.cell_size // 2),
-                 center[1] + math.sin(end_angle) * (self.cell_size // 2))
+                (center[0] + math.cos(start_angle) * mouth_radius,
+                 center[1] + math.sin(start_angle) * mouth_radius),
+                (center[0] + math.cos(end_angle) * mouth_radius,
+                 center[1] + math.sin(end_angle) * mouth_radius)
             ])
+        else:
+            pygame.draw.circle(self.screen, self.YELLOW, center, pacman_radius)
 
     def draw_ghosts(self):
         """Draw ghosts using images from public folder"""
@@ -637,6 +685,23 @@ class PacmanGame:
             # Determine direction for image selection
             direction = ghost['direction']
             facing_right = direction[0] > 0 or (direction[0] == 0 and direction[1] == 0)  # Default to right if stationary
+            
+            # If ghost is eaten, show only eyes
+            if ghost.get('eaten', False):
+                # Use eyes image
+                image_key = 'eyes_right' if facing_right else 'eyes_left'
+                eyes_image = self.ghost_images.get(image_key)
+                
+                if eyes_image:
+                    # Scale image to fit cell size
+                    scaled_image = pygame.transform.scale(eyes_image, (self.cell_size, self.cell_size))
+                    # Position image centered on ghost position
+                    image_rect = scaled_image.get_rect(center=center)
+                    self.screen.blit(scaled_image, image_rect)
+                else:
+                    # Fallback: draw simple eyes
+                    self.draw_eyes_fallback(center)
+                continue  # Skip to next ghost
             
             # Get ghost index (0-3) based on color
             ghost_index = 0
@@ -686,6 +751,23 @@ class PacmanGame:
         pygame.draw.circle(self.screen, self.BLACK, left_eye, 2)
         pygame.draw.circle(self.screen, self.BLACK, right_eye, 2)
 
+    def draw_eyes_fallback(self, center):
+        """Draw simple eyes when ghost image is not available"""
+        # Just draw two white eyes with black pupils on transparent background
+        eye_size = 6
+        pupil_size = 3
+        eye_y = center[1]
+        left_eye = (center[0] - 8, eye_y)
+        right_eye = (center[0] + 8, eye_y)
+
+        # Draw white eyes
+        pygame.draw.circle(self.screen, self.WHITE, left_eye, eye_size)
+        pygame.draw.circle(self.screen, self.WHITE, right_eye, eye_size)
+        
+        # Draw black pupils
+        pygame.draw.circle(self.screen, self.BLACK, left_eye, pupil_size)
+        pygame.draw.circle(self.screen, self.BLACK, right_eye, pupil_size)
+
     def draw_ui(self):
         """Draw game UI"""
         ui_y = self.maze_gen.height * self.cell_size + 10
@@ -715,7 +797,7 @@ class PacmanGame:
                 path_steps = len(self.shortest_path) - 1 if self.shortest_path else 0
                 path_info = f" | Path: {path_steps} steps"
             
-            inst_text = self.font.render(f"{mode_text} | {ghost_info}{path_info} | A: Toggle Auto | H: Path | P: Pause | R: Restart", True, self.YELLOW)
+            inst_text = self.font.render(f"{mode_text} | {ghost_info}{path_info} | A: Toggle Auto | H: Hint Path | P: Pause | R: Restart", True, self.YELLOW)
             self.screen.blit(inst_text, (10, ui_y + 30))
 
         elif self.game_state == "paused":
@@ -729,12 +811,76 @@ class PacmanGame:
             self.screen.blit(restart_text, (self.screen_width // 2 - 70, self.screen_height // 2 + 20))
 
         elif self.game_state == "level_complete":
-            complete_text = self.large_font.render("LEVEL COMPLETE!", True, (0, 255, 0))
-            bonus_text = self.font.render(f"Exit Gate Bonus: +1000", True, (255, 255, 0))
-            next_text = self.font.render("Press N for next level", True, self.WHITE)
-            self.screen.blit(complete_text, (self.screen_width // 2 - 120, self.screen_height // 2 - 40))
-            self.screen.blit(bonus_text, (self.screen_width // 2 - 80, self.screen_height // 2))
-            self.screen.blit(next_text, (self.screen_width // 2 - 60, self.screen_height // 2 + 40))
+            self.draw_win_notification()
+
+    def draw_win_notification(self):
+        """Draw a beautiful win notification box with score and congratulations"""
+        # Semi-transparent overlay
+        overlay = pygame.Surface((self.screen_width, self.screen_height))
+        overlay.set_alpha(150)  # Semi-transparent
+        overlay.fill((0, 0, 0))  # Black overlay
+        self.screen.blit(overlay, (0, 0))
+        
+        # Calculate notification box dimensions
+        box_width = 400
+        box_height = 300
+        box_x = (self.screen_width - box_width) // 2
+        box_y = (self.screen_height - box_height) // 2
+        
+        # Draw main notification box with gradient border
+        # Outer border (gold)
+        outer_border = pygame.Rect(box_x - 5, box_y - 5, box_width + 10, box_height + 10)
+        pygame.draw.rect(self.screen, (255, 215, 0), outer_border, border_radius=15)  # Gold border
+        
+        # Inner border (darker gold)
+        inner_border = pygame.Rect(box_x - 2, box_y - 2, box_width + 4, box_height + 4)
+        pygame.draw.rect(self.screen, (184, 134, 11), inner_border, border_radius=12)  # Dark gold
+        
+        # Main box (dark blue gradient)
+        main_box = pygame.Rect(box_x, box_y, box_width, box_height)
+        pygame.draw.rect(self.screen, (25, 25, 112), main_box, border_radius=10)  # Midnight blue
+        
+        # Draw inner gradient effect
+        for i in range(box_height // 3):
+            alpha = int(50 * (1 - i / (box_height // 3)))
+            if alpha > 0:
+                gradient_surf = pygame.Surface((box_width, 1))
+                gradient_surf.set_alpha(alpha)
+                gradient_surf.fill((135, 206, 250))  # Light sky blue
+                self.screen.blit(gradient_surf, (box_x, box_y + i))
+        
+        # Title: "CONGRATULATIONS!"
+        title_font = pygame.font.SysFont("arial", 36, bold=True)
+        title_text = title_font.render("CONGRATULATIONS!", True, (255, 215, 0))  # Gold
+        title_rect = title_text.get_rect(center=(box_x + box_width // 2, box_y + 40))
+        self.screen.blit(title_text, title_rect)
+        
+        # Score information
+        score_font = pygame.font.SysFont("arial", 20, bold=True)
+        
+        # Current score
+        score_text = score_font.render(f"Final Score: {self.score}", True, self.WHITE)
+        score_rect = score_text.get_rect(center=(box_x + box_width // 2, box_y + 100))
+        self.screen.blit(score_text, score_rect)
+        
+        # Level info
+        level_text = score_font.render(f"Level {self.level} Completed", True, (0, 255, 127))  # Light blue
+        level_rect = level_text.get_rect(center=(box_x + box_width // 2, box_y + 160))
+        self.screen.blit(level_text, level_rect)
+        
+        # Divider line
+        line_y = box_y + 190
+        pygame.draw.line(self.screen, (255, 215, 0), (box_x + 50, line_y), (box_x + box_width - 50, line_y), 2)
+        
+        # Instructions
+        instruction_font = pygame.font.SysFont("arial", 16, bold=True)
+        next_text = instruction_font.render("Press N for Next Level", True, (144, 238, 144))  # Light green
+        next_rect = next_text.get_rect(center=(box_x + box_width // 2, box_y + 220))
+        self.screen.blit(next_text, next_rect)
+        
+        restart_text = instruction_font.render("Press R to Restart", True, (255, 182, 193))  # Light pink
+        restart_rect = restart_text.get_rect(center=(box_x + box_width // 2, box_y + 245))
+        self.screen.blit(restart_text, restart_rect)
 
     def move_pacman(self):
         """Move Pacman with GRID-BASED movement - ONE BLOCK AT A TIME"""
@@ -768,8 +914,9 @@ class PacmanGame:
 
             # Check if we can move to target block
             if self.is_valid_position(target_col, target_row):
-                # Smooth animation towards target block
-                step_size = self.pacman_speed * 0.1  # Use pacman_speed for consistent movement
+                # Smooth animation towards target block - TIME-BASED movement for consistency
+                base_speed = config.PACMAN_SPEED  # Use config value
+                step_size = base_speed * self.delta_time  # Distance to move this frame
                 
                 # Move towards target position
                 if abs(self.pacman_pos[0] - target_col) > 0.01:
@@ -805,6 +952,11 @@ class PacmanGame:
     def move_ghosts(self):
         """Move ghosts with GRID-BASED movement - ONE BLOCK AT A TIME with enhanced AI"""
         for ghost in self.ghosts:
+            # Special handling for eaten ghosts (eyes only)
+            if ghost.get('eaten', False):
+                self.move_eaten_ghost_to_spawn(ghost)
+                continue
+                
             # Get current block position
             current_col = int(round(ghost['pos'][0]))
             current_row = int(round(ghost['pos'][1]))
@@ -858,8 +1010,10 @@ class PacmanGame:
                 if self.is_valid_position(target_col, target_row):
                     ghost['direction'] = new_direction
                     
-                    # Smooth animation towards target block
-                    step_size = 0.12  # Slightly faster for smoother movement
+                    # Smooth animation towards target block - SLOWER than Pacman
+                    # Time-based movement for consistency
+                    ghost_speed = config.GHOST_SPEED  # Use config value
+                    step_size = ghost_speed * self.delta_time  # Time-based like Pacman
                     
                     # Move towards target position
                     if abs(ghost['pos'][0] - target_col) > 0.01:
@@ -914,6 +1068,135 @@ class PacmanGame:
                     if ghost['random_timer'] > 300:  # 5 seconds at 60fps
                         ghost['random_timer'] = 0
                         ghost['mode'] = 'scatter'
+
+    def move_eaten_ghost_to_spawn(self, ghost):
+        """Move eaten ghost (eyes only) back to spawn point using pathfinding"""
+        # Spawn point is near the center of the maze
+        spawn_row = self.maze_gen.height // 2
+        spawn_col = self.maze_gen.width // 2
+        
+        # Find a valid spawn position near center
+        spawn_pos = self.find_valid_ghost_start_position(spawn_row, spawn_col)
+        target_pos = (spawn_pos[0], spawn_pos[1])  # (row, col)
+        
+        current_col = int(round(ghost['pos'][0]))
+        current_row = int(round(ghost['pos'][1]))
+        current_pos = (current_row, current_col)
+        
+        # Ensure current position is valid - if not, move to nearest valid position
+        if not self.is_valid_position(current_col, current_row):
+            # Find nearest valid position
+            for radius in range(1, 5):
+                for dr in range(-radius, radius + 1):
+                    for dc in range(-radius, radius + 1):
+                        test_row = current_row + dr
+                        test_col = current_col + dc
+                        if (self.is_valid_position(test_col, test_row)):
+                            ghost['pos'][0] = float(test_col)
+                            ghost['pos'][1] = float(test_row)
+                            current_pos = (test_row, test_col)
+                            # print(f"{ghost['name']} eyes moved to valid position {current_pos}")
+                            break
+                    else:
+                        continue
+                    break
+                else:
+                    continue
+                break
+        
+        # Initialize path to spawn ONLY if path doesn't exist or is empty
+        if not ghost.get('return_path') or len(ghost.get('return_path', [])) == 0:
+            try:
+                # Use Dijkstra pathfinding to find route back to spawn
+                # print(f"{ghost['name']} eyes: trying pathfinding from {current_pos} to {target_pos}")
+                path, distance = self.dijkstra.shortest_path(current_pos, target_pos)
+                if path and len(path) > 1:
+                    ghost['return_path'] = path
+                    ghost['path_index'] = 0
+                    # print(f"{ghost['name']} eyes finding path home: {len(path)} steps")
+                else:
+                    # Fallback: create simple direct path with multiple waypoints
+                    waypoints = []
+                    # Add current position
+                    waypoints.append(current_pos)
+                    # Add target position
+                    waypoints.append(target_pos)
+                    
+                    ghost['return_path'] = waypoints
+                    ghost['path_index'] = 0
+                    # print(f"{ghost['name']} eyes using direct path to spawn (pathfinding failed)")
+            except Exception as e:
+                print(f"Path calculation failed for {ghost['name']} eyes: {e}")
+                # Fallback: direct movement
+                ghost['return_path'] = [current_pos, target_pos]
+                ghost['path_index'] = 0
+        
+        # Follow the calculated path
+        if 'return_path' in ghost and ghost['return_path']:
+            path = ghost['return_path']
+            path_index = ghost.get('path_index', 0)
+            
+            # Check if we need to advance to next waypoint
+            current_waypoint = path[path_index] if path_index < len(path) else None
+            if current_waypoint and abs(current_row - current_waypoint[0]) < 0.1 and abs(current_col - current_waypoint[1]) < 0.1:
+                # Reached current waypoint, advance to next
+                ghost['path_index'] = min(path_index + 1, len(path) - 1)
+                path_index = ghost['path_index']
+            
+            # Get target position (next waypoint)
+            if path_index < len(path):
+                target_waypoint = path[path_index]
+                target_row, target_col = target_waypoint[0], target_waypoint[1]
+                
+                # Move towards target waypoint - eyes move faster than normal ghosts
+                eyes_speed = config.GHOST_EYES_SPEED  # Use config value
+                step_size = eyes_speed * self.delta_time  # Time-based movement
+                
+                # Calculate direction to target waypoint
+                old_pos = [ghost['pos'][0], ghost['pos'][1]]
+                
+                if abs(ghost['pos'][0] - target_col) > 0.05:
+                    if target_col > ghost['pos'][0]:
+                        ghost['pos'][0] = min(ghost['pos'][0] + step_size, target_col)
+                    else:
+                        ghost['pos'][0] = max(ghost['pos'][0] - step_size, target_col)
+                
+                if abs(ghost['pos'][1] - target_row) > 0.05:
+                    if target_row > ghost['pos'][1]:
+                        ghost['pos'][1] = min(ghost['pos'][1] + step_size, target_row)
+                    else:
+                        ghost['pos'][1] = max(ghost['pos'][1] - step_size, target_row)
+                
+                # Debug: Check if position actually changed (commented for cleaner output)
+                # if old_pos != [ghost['pos'][0], ghost['pos'][1]]:
+                #     print(f"{ghost['name']} moved from {old_pos} to [{ghost['pos'][0]:.1f}, {ghost['pos'][1]:.1f}] towards waypoint {path_index}/{len(path)} at ({target_row}, {target_col})")
+                # else:
+                #     print(f"{ghost['name']} STUCK at {old_pos}, target waypoint {path_index}/{len(path)} at ({target_row}, {target_col})")
+                
+                # Check if ghost reached final spawn point
+                final_target = path[-1]
+                distance_to_spawn = abs(ghost['pos'][0] - final_target[1]) + abs(ghost['pos'][1] - final_target[0])
+                if distance_to_spawn < 0.5:
+                    # Ghost has returned to spawn - restore to normal state
+                    ghost['eaten'] = False
+                    ghost['pos'] = [float(final_target[1]), float(final_target[0])]  # (col, row)
+                    # Clean up pathfinding data
+                    if 'return_path' in ghost:
+                        del ghost['return_path']
+                    if 'path_index' in ghost:
+                        del ghost['path_index']
+                    # print(f"{ghost['name']} ghost has respawned!")
+            else:
+                # Reached end of path
+                final_target = path[-1]
+                ghost['eaten'] = False
+                ghost['pos'] = [float(final_target[1]), float(final_target[0])]  # (col, row)
+                # Clean up pathfinding data
+                if 'return_path' in ghost:
+                    del ghost['return_path']
+                if 'path_index' in ghost:
+                    del ghost['path_index']
+                # print(f"{ghost['name']} ghost has respawned!")
 
     def get_smart_direction(self, ghost, valid_directions, current_pos, is_stuck):
         """Smart direction selection that reduces oscillation and improves flow"""
@@ -1307,9 +1590,10 @@ class PacmanGame:
         if hasattr(self, 'exit_gate'):
             self.auto_target = self.exit_gate
             self.calculate_auto_path()
-            print(" Escape mode: Heading to exit gate!")
+            # print(" Escape mode: Heading to exit gate!")
         else:
-            print(" No exit gate found!")
+            # print(" No exit gate found!")
+            pass
 
     def find_auto_target(self):
         """GOAL-FIRST target finding - Ưu tiên goal tuyệt đối"""
@@ -1321,9 +1605,9 @@ class PacmanGame:
             if self.current_goal:
                 self.auto_target = self.current_goal
                 self.calculate_auto_path()
-                print(f"Auto target set: {self.auto_target}")
+                # print(f"Auto target set: {self.auto_target}")
             else:
-                print("No auto target found")
+                # print("No auto target found")
                 self.auto_target = None
                 self.auto_path = []
 
@@ -1333,240 +1617,455 @@ class PacmanGame:
             self.auto_path = []
 
     def _emergency_ghost_avoidance(self, nearby_ghosts):
-        """Xử lý việc quay đầu và rẽ vào ngã gần nhất khi gặp ghost - CẢI THIỆN"""
+        """
+        Thuật toán né ma cải tiến - phát hiện 4 ô, ưu tiên ngã rẽ, tránh quay đầu liên tục
+        """
         current_time = pygame.time.get_ticks()
 
         # Khởi tạo biến nếu chưa có
         if not hasattr(self, 'last_emergency_turn'):
             self.last_emergency_turn = 0
+        if not hasattr(self, 'last_turn_direction'):
+            self.last_turn_direction = None
+        if not hasattr(self, 'turn_count'):
+            self.turn_count = 0
+        if not hasattr(self, 'consecutive_turns'):
+            self.consecutive_turns = 0
 
-        # Tăng cooldown để ít thay đổi hướng hơn (200ms thay vì 100ms)
-        if current_time - self.last_emergency_turn < 500:  # 200ms cooldown
+        # Độ trễ động giữa các lần quay đầu để tránh rung lắc
+        turn_cooldown = 60 if self.consecutive_turns <= 1 else 120  # Tăng cooldown nếu quay nhiều
+        
+        if current_time - self.last_emergency_turn < turn_cooldown:
             return False
 
         pacman_row, pacman_col = int(self.pacman_pos[1]), int(self.pacman_pos[0])
         
-        # Dự đoán vị trí ma trong 2-3 bước tiếp theo
-        predicted_ghost_positions = []
+        # Phân tích tất cả ma trong phạm vi 4 ô
+        danger_analysis = []
         for ghost_pos, distance in nearby_ghosts:
             ghost_row, ghost_col = ghost_pos
-            
-            # Tìm ghost object để lấy direction
-            ghost_obj = None
-            for g in self.ghosts:
-                g_row, g_col = int(g['pos'][1]), int(g['pos'][0])
-                if g_row == ghost_row and g_col == ghost_col:
-                    ghost_obj = g
-                    break
-            
-            if ghost_obj and ghost_obj['direction'] != [0, 0]:
-                # Dự đoán 2-3 bước tiếp theo
-                dx, dy = ghost_obj['direction']
-                for steps in range(1, 4):  # Dự đoán 1-3 bước
-                    pred_col = ghost_col + dx * steps
-                    pred_row = ghost_row + dy * steps
-                    if self.is_valid_position(pred_col, pred_row):
-                        predicted_ghost_positions.append((pred_row, pred_col, distance + steps))
+            # Tính vector từ ma đến Pacman để biết hướng ma đang đuổi
+            direction_to_pacman = [pacman_col - ghost_col, pacman_row - ghost_row]
+            danger_analysis.append({
+                'pos': (ghost_row, ghost_col),
+                'distance': distance,
+                'threat_vector': direction_to_pacman
+            })
+
+        # Sắp xếp theo độ nguy hiểm (gần nhất trước)
+        danger_analysis.sort(key=lambda x: x['distance'])
         
-        # Kết hợp vị trí hiện tại và dự đoán
-        all_dangerous_positions = [(pos[0], pos[1], dist) for pos, dist in nearby_ghosts]
-        all_dangerous_positions.extend(predicted_ghost_positions)
+        if not danger_analysis:
+            return False
 
-        # Tìm ghost gần nhất (bao gồm cả dự đoán)
-        nearest_ghost_pos, min_distance = min(nearby_ghosts, key=lambda x: x[1])
-        ghost_row, ghost_col = nearest_ghost_pos
+        # Tìm ghost gần nhất
+        nearest_ghost = danger_analysis[0]
+        min_distance = nearest_ghost['distance']
 
-        # CRITICAL DANGER: Ghost gần (<= 4 ô) - phản ứng sớm hơn
-        if min_distance <= 4:
-            print(f"Ma đến gần! Khoảng cách: {min_distance} ô - Chuẩn bị quay đầu!")
+        # === PHẢN ỨNG THEO MỨC ĐỘ NGUY HIỂM ===
+        
+        # LEVEL 1: CRITICAL (≤ 2 ô) - Hành động khẩn cấp
+        if min_distance <= 2:
+            return self._handle_critical_danger(pacman_row, pacman_col, danger_analysis, current_time)
+        
+        # LEVEL 2: HIGH DANGER (3-4 ô) - Ưu tiên ngã rẽ, tránh quay đầu
+        elif min_distance <= 4:
+            return self._handle_high_danger(pacman_row, pacman_col, danger_analysis, current_time)
+        
+        return False
+
+    def _handle_critical_danger(self, pacman_row, pacman_col, danger_analysis, current_time):
+        """Xử lý nguy hiểm cấp độ 1: Ma rất gần (≤2 ô)"""
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # down, up, right, left
+        escape_options = []
+        
+        for dx, dy in directions:
+            new_col, new_row = pacman_col + dx, pacman_row + dy
             
-            # Tìm hướng an toàn nhất bằng cách tính toán khoảng cách đến TẤT CẢ ghosts
-            escape_options = []
-            directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # down, up, right, left
-            
-            for dx, dy in directions:
-                new_col, new_row = pacman_col + dx, pacman_row + dy
+            if not self.is_valid_position(new_col, new_row):
+                continue
                 
-                if self.is_valid_position(new_col, new_row):
-                    # Tính khoảng cách đến tất cả ghosts (bao gồm dự đoán)
-                    min_dist_to_any_ghost = float('inf')
-                    
-                    for danger_row, danger_col, _ in all_dangerous_positions:
-                        dist = abs(new_row - danger_row) + abs(new_col - danger_col)
-                        min_dist_to_any_ghost = min(min_dist_to_any_ghost, dist)
-                    
-                    # Kiểm tra xem có dẫn đến dead end không
-                    is_dead_end = self._is_dead_end(new_col, new_row)
-                    
-                    # Tính score: khoảng cách cao hơn = tốt hơn, dead end = tệ
-                    safety_score = min_dist_to_any_ghost - (10 if is_dead_end else 0)
-                    escape_options.append((dx, dy, safety_score, min_dist_to_any_ghost))
+            # Tính điểm an toàn cho hướng này
+            safety_score = self._calculate_safety_score(
+                new_row, new_col, danger_analysis, 
+                pacman_row, pacman_col, (dx, dy)
+            )
             
-            if escape_options:
-                # Sắp xếp theo safety score (cao nhất trước)
-                escape_options.sort(key=lambda x: x[2], reverse=True)
-                best_escape = escape_options[0]
-                dx, dy, score, safety_dist = best_escape
-                
+            escape_options.append((dx, dy, safety_score))
+        
+        if escape_options:
+            # Chọn hướng an toàn nhất
+            escape_options.sort(key=lambda x: x[2], reverse=True)
+            best_escape = escape_options[0]
+            dx, dy, score = best_escape
+            
+            self.pacman_next_direction = [dx, dy]
+            self.last_emergency_turn = current_time
+            self._update_turn_tracking((dx, dy))
+            
+            # Kích hoạt escape mode ngắn
+            self.escape_mode = True
+            self.escape_steps = 0
+            self.min_escape_distance = 2
+            
+            return True
+        
+        return False
+
+    def _handle_high_danger(self, pacman_row, pacman_col, danger_analysis, current_time):
+        """Xử lý nguy hiểm cấp độ 2: Ma gần (3-4 ô) - Ưu tiên ngã rẽ"""
+        current_dir = self.pacman_direction
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # down, up, right, left
+        
+        # Phân loại các hướng di chuyển
+        forward_dir = current_dir
+        backward_dir = [-current_dir[0], -current_dir[1]]
+        side_dirs = [d for d in directions if d != forward_dir and d != backward_dir]
+        
+        # Ưu tiên: 1) Ngã rẽ, 2) Tiến thẳng (nếu an toàn), 3) Quay đầu (cuối cùng)
+        movement_options = []
+        
+        # 1. Kiểm tra ngã rẽ trước (ưu tiên cao nhất)
+        for dx, dy in side_dirs:
+            new_col, new_row = pacman_col + dx, pacman_row + dy
+            if self.is_valid_position(new_col, new_row):
+                safety_score = self._calculate_safety_score(
+                    new_row, new_col, danger_analysis,
+                    pacman_row, pacman_col, (dx, dy)
+                )
+                # Bonus cho ngã rẽ
+                movement_options.append((dx, dy, safety_score + 10, 'turn'))
+        
+        # 2. Kiểm tra tiến thẳng
+        if forward_dir != [0, 0]:
+            new_col = pacman_col + forward_dir[0]
+            new_row = pacman_row + forward_dir[1]
+            if self.is_valid_position(new_col, new_row):
+                safety_score = self._calculate_safety_score(
+                    new_row, new_col, danger_analysis,
+                    pacman_row, pacman_col, forward_dir
+                )
+                movement_options.append((forward_dir[0], forward_dir[1], safety_score + 5, 'forward'))
+        
+        # 3. Quay đầu (chỉ khi thực sự cần thiết)
+        if len(movement_options) == 0 or max(opt[2] for opt in movement_options) < 5:
+            new_col = pacman_col + backward_dir[0]
+            new_row = pacman_row + backward_dir[1]
+            if self.is_valid_position(new_col, new_row):
+                safety_score = self._calculate_safety_score(
+                    new_row, new_col, danger_analysis,
+                    pacman_row, pacman_col, backward_dir
+                )
+                # Penalty cho quay đầu, nhưng vẫn cần thiết nếu không có lựa chọn
+                penalty = 5 if self.consecutive_turns >= 2 else 2
+                movement_options.append((backward_dir[0], backward_dir[1], safety_score - penalty, 'backward'))
+        
+        # Chọn hướng tốt nhất
+        if movement_options:
+            movement_options.sort(key=lambda x: x[2], reverse=True)
+            best_move = movement_options[0]
+            dx, dy, score, move_type = best_move
+            
+            # Chỉ thực hiện nếu đủ an toàn hoặc không có lựa chọn
+            if score > 3 or move_type in ['turn', 'forward']:
                 self.pacman_next_direction = [dx, dy]
                 self.last_emergency_turn = current_time
+                self._update_turn_tracking((dx, dy))
                 
-                # Kích hoạt escape mode để di chuyển xa trước khi quay lại
-                self.escape_mode = True
-                self.escape_steps = 0
-                self.original_direction = self.pacman_direction.copy()  # Lưu hướng ban đầu
-                
-                print(f"Emergency escape: {self.pacman_next_direction} (safety: {safety_dist}) - ESCAPE MODE ON!")
-                return True
-
-        # HIGH DANGER: Ghost ở khoảng cách trung bình (4 ô) - mở rộng phạm vi
-        elif min_distance <= 4:  # tăng từ 3 lên 4 ô
-            print(f"Ghost ở khoảng cách {min_distance} ô, chuẩn bị quay đầu...")
-            
-            # Ưu tiên quay đầu đơn giản trước
-            opposite_direction = [-self.pacman_direction[0], -self.pacman_direction[1]]
-            test_col = pacman_col + opposite_direction[0]
-            test_row = pacman_row + opposite_direction[1]
-            
-            # Kiểm tra có thể quay đầu không
-            if self.is_valid_position(test_col, test_row):
-                # Kiểm tra quay đầu có an toàn không
-                is_safe = True
-                for ghost_pos, dist in nearby_ghosts:
-                    g_row, g_col = ghost_pos
-                    new_dist = abs(test_row - g_row) + abs(test_col - g_col)
-                    if new_dist <= 2:  # quá gần nếu quay đầu
-                        is_safe = False
-                        break
-                
-                if is_safe:
-                    self.pacman_next_direction = opposite_direction
-                    self.last_emergency_turn = current_time
-                    
-                    # Kích hoạt escape mode để di chuyển xa trước khi quay lại
+                # Escape mode ngắn hơn cho level này
+                if move_type == 'backward':
                     self.escape_mode = True
                     self.escape_steps = 0
-                    self.original_direction = self.pacman_direction.copy()  # Lưu hướng ban đầu
-                    
-                    print(f"Quay đầu để tránh ghost: {opposite_direction} - ESCAPE MODE ON!")
-                    return True
-            
-            # Nếu không thể quay đầu, tìm đường đi tránh ghosts với lookahead
-            escape_path = self._find_smart_escape_path(pacman_col, pacman_row, all_dangerous_positions)
-            
-            if escape_path and len(escape_path) > 1:
-                next_pos = escape_path[1]  # Bước tiếp theo
-                dx = next_pos[1] - pacman_col  # next_pos is (row, col)
-                dy = next_pos[0] - pacman_row
+                    self.min_escape_distance = 1
                 
-                self.pacman_next_direction = [dx, dy]
-                self.last_emergency_turn = current_time
-                print(f"Smart escape path: {self.pacman_next_direction}")
                 return True
-            else:
-                # Fallback: chọn hướng tăng khoảng cách nhiều nhất
-                directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-                best_direction = None
-                max_distance_increase = 0
-                
-                for dx, dy in directions:
-                    new_col, new_row = pacman_col + dx, pacman_row + dy
-                    if self.is_valid_position(new_col, new_row):
-                        # Tính khoảng cách đến ghost gần nhất sau khi di chuyển
-                        distance_after_move = abs(new_row - ghost_row) + abs(new_col - ghost_col)
-                        distance_increase = distance_after_move - min_distance
-                        
-                        if distance_increase > max_distance_increase:
-                            max_distance_increase = distance_increase
-                            best_direction = [dx, dy]
-                
-                if best_direction:
-                    self.pacman_next_direction = best_direction
-                    self.last_emergency_turn = current_time
-                    print(f"Fallback escape: {self.pacman_next_direction}")
-                    return True
+        
+        return False
 
-        return False  # Không thể xử lý
+    def _calculate_safety_score(self, test_row, test_col, danger_analysis, 
+                              current_row, current_col, direction):
+        """Tính điểm an toàn cho một vị trí với nhiều yếu tố"""
+        score = 0
+        
+        # 1. Khoảng cách đến ma gần nhất
+        min_dist_to_ghost = min(
+            abs(test_row - ghost['pos'][0]) + abs(test_col - ghost['pos'][1])
+            for ghost in danger_analysis
+        )
+        score += min_dist_to_ghost * 3  # Càng xa ma càng tốt
+        
+        # 2. Tránh dead end
+        if not self._is_dead_end(test_col, test_row):
+            score += 8
+        else:
+            score -= 5
+        
+        # 3. Kiểm tra có tạo khoảng cách lớn hơn hiện tại không
+        current_min_dist = min(
+            abs(current_row - ghost['pos'][0]) + abs(current_col - ghost['pos'][1])
+            for ghost in danger_analysis
+        )
+        if min_dist_to_ghost > current_min_dist:
+            score += 5  # Bonus nếu tăng khoảng cách
+        
+        # 4. Tránh di chuyển về phía ma
+        for ghost in danger_analysis:
+            ghost_row, ghost_col = ghost['pos']
+            # Vector từ vị trí hiện tại đến ma
+            to_ghost = [ghost_col - current_col, ghost_row - current_row]
+            # Vector di chuyển
+            move_vec = direction
+            
+            # Tính tích vô hướng để xem có di chuyển về phía ma không
+            dot_product = to_ghost[0] * move_vec[0] + to_ghost[1] * move_vec[1]
+            if dot_product > 0:  # Di chuyển về phía ma
+                score -= 3
+            else:  # Di chuyển ra xa ma
+                score += 2
+        
+        # 5. Kiểm tra có line of sight với ma không (sau khi di chuyển)
+        for ghost in danger_analysis:
+            if not self._has_line_of_sight((test_row, test_col), ghost['pos']):
+                score += 4  # Bonus nếu sẽ mất line of sight với ma
+        
+        return score
+
+    def _update_turn_tracking(self, new_direction):
+        """Cập nhật tracking cho việc quay đầu"""
+        if not hasattr(self, 'last_turn_direction'):
+            self.last_turn_direction = None
+            
+        # Kiểm tra có phải quay đầu không (hướng ngược lại)
+        current_dir = self.pacman_direction
+        is_opposite = (new_direction[0] == -current_dir[0] and 
+                      new_direction[1] == -current_dir[1])
+        
+        if is_opposite:
+            self.consecutive_turns = getattr(self, 'consecutive_turns', 0) + 1
+        else:
+            self.consecutive_turns = 0
+            
+        self.last_turn_direction = new_direction
+
+    def _check_ghost_on_path_to_goal(self):
+        """
+        Kiểm tra có ma nào trên đường đi tới goal không
+        Trả về (có_ma, vị_trí_ma, khoảng_cách)
+        """
+        if not self.current_goal:
+            return False, None, 0
+            
+        pacman_row, pacman_col = int(self.pacman_pos[1]), int(self.pacman_pos[0])
+        current_pos = (pacman_row, pacman_col)
+        
+        # Nếu có auto_path, kiểm tra theo path
+        if hasattr(self, 'auto_path') and self.auto_path and len(self.auto_path) > 0:
+            # Kiểm tra 6-8 bước đầu tiên trên đường đi tới goal
+            check_distance = min(8, len(self.auto_path))
+            path_to_check = self.auto_path[:check_distance]
+        else:
+            # Nếu không có path, tạo đường thẳng tới goal để kiểm tra
+            goal_row, goal_col = self.current_goal
+            path_to_check = []
+            
+            # Tạo đường thẳng đơn giản tới goal
+            steps = max(abs(goal_row - pacman_row), abs(goal_col - pacman_col))
+            if steps > 0:
+                for i in range(1, min(8, steps + 1)):
+                    progress = i / steps
+                    check_row = int(pacman_row + (goal_row - pacman_row) * progress)
+                    check_col = int(pacman_col + (goal_col - pacman_col) * progress)
+                    path_to_check.append((check_row, check_col))
+        
+        # Kiểm tra ma
+        for ghost in self.ghosts:
+            if ghost.get('scared', False):
+                continue
+                
+            ghost_row, ghost_col = int(ghost['pos'][1]), int(ghost['pos'][0])
+            ghost_pos = (ghost_row, ghost_col)
+            
+            # Kiểm tra khoảng cách trực tiếp tới Pacman trước
+            distance_to_pacman = abs(pacman_row - ghost_row) + abs(pacman_col - ghost_col)
+            
+            # Nếu ma rất gần Pacman (trong 4 ô)
+            if distance_to_pacman <= 4:
+                # Kiểm tra có line of sight không
+                if self._has_line_of_sight(current_pos, ghost_pos):
+                    return True, ghost_pos, distance_to_pacman
+            
+            # Kiểm tra ghost có nằm gần path không
+            for i, path_pos in enumerate(path_to_check):
+                path_distance = abs(path_pos[0] - ghost_row) + abs(path_pos[1] - ghost_col)
+                
+                # Nếu ghost rất gần path (trong 2 ô)
+                if path_distance <= 2:
+                    # Kiểm tra có line of sight với Pacman không
+                    if self._has_line_of_sight(current_pos, ghost_pos):
+                        return True, ghost_pos, distance_to_pacman
+                        
+        return False, None, 0
+
+    def _find_nearest_turn_from_path(self):
+        """
+        Tìm ngã rẽ gần nhất từ đường đi hiện tại
+        Trả về hướng di chuyển để đến ngã rẽ đó
+        """
+        pacman_row, pacman_col = int(self.pacman_pos[1]), int(self.pacman_pos[0])
+        
+        # Tìm tất cả các ngã rẽ trong phạm vi 6 ô
+        potential_turns = []
+        search_radius = 6
+        
+        for dr in range(-search_radius, search_radius + 1):
+            for dc in range(-search_radius, search_radius + 1):
+                test_row = pacman_row + dr
+                test_col = pacman_col + dc
+                
+                if not self.is_valid_position(test_col, test_row):
+                    continue
+                    
+                # Kiểm tra có phải là ngã rẽ không (có ít nhất 3 hướng đi)
+                if self._is_junction(test_col, test_row):
+                    distance = abs(dr) + abs(dc)
+                    # Tính điểm ưu tiên: gần + tránh ma
+                    safety_score = self._calculate_turn_safety_score(test_row, test_col)
+                    potential_turns.append((test_row, test_col, distance, safety_score))
+        
+        if potential_turns:
+            # Sắp xếp theo: safety_score cao + khoảng cách gần
+            potential_turns.sort(key=lambda x: (x[3], -x[2]), reverse=True)
+            best_turn = potential_turns[0]
+            turn_row, turn_col = best_turn[0], best_turn[1]
+            
+            # Tính hướng đi đến ngã rẽ này
+            if turn_col > pacman_col:
+                return [1, 0]  # Đi phải
+            elif turn_col < pacman_col:
+                return [-1, 0]  # Đi trái
+            elif turn_row > pacman_row:
+                return [0, 1]  # Đi xuống
+            elif turn_row < pacman_row:
+                return [0, -1]  # Đi lên
+                
+        return None
+
+    def _is_junction(self, col, row):
+        """Kiểm tra vị trí có phải là ngã rẽ không (có ít nhất 3 hướng đi)"""
+        if not self.is_valid_position(col, row):
+            return False
+            
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+        valid_directions = 0
+        
+        for dx, dy in directions:
+            next_col, next_row = col + dx, row + dy
+            if self.is_valid_position(next_col, next_row):
+                valid_directions += 1
+                
+        return valid_directions >= 3
+
+    def _calculate_turn_safety_score(self, turn_row, turn_col):
+        """Tính điểm an toàn của một ngã rẽ"""
+        score = 10  # Điểm cơ bản
+        
+        # Trừ điểm nếu gần ma
+        for ghost in self.ghosts:
+            if ghost.get('scared', False):
+                continue
+                
+            ghost_row, ghost_col = int(ghost['pos'][1]), int(ghost['pos'][0])
+            distance_to_ghost = abs(turn_row - ghost_row) + abs(turn_col - ghost_col)
+            
+            if distance_to_ghost <= 3:
+                score -= (4 - distance_to_ghost) * 2
+                
+        # Cộng điểm nếu có nhiều lối thoát
+        exit_count = 0
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+        for dx, dy in directions:
+            next_col, next_row = turn_col + dx, turn_row + dy
+            if self.is_valid_position(next_col, next_row):
+                exit_count += 1
+                
+        score += exit_count * 2
+        
+        return score
+
+    def _start_path_avoidance(self, avoidance_direction):
+        """Bắt đầu chế độ né ma trên đường đi"""
+        self.path_avoidance_mode = True
+        self.path_avoidance_start_time = pygame.time.get_ticks()
+        self.path_avoidance_direction = avoidance_direction
+        
+        # Lưu đường đi gốc
+        if hasattr(self, 'auto_path'):
+            self.original_goal_path = self.auto_path.copy()
+            
+        print(f"🔄 Bắt đầu né ma trên đường đi - hướng: {avoidance_direction}")
+
+    def _should_return_to_original_path(self):
+        """Kiểm tra có nên quay lại đường đi gốc không"""
+        if not self.path_avoidance_mode:
+            return False
+            
+        current_time = pygame.time.get_ticks()
+        avoidance_duration = current_time - self.path_avoidance_start_time
+        
+        # Sau 1.5-2 giây hoặc không còn ma gần
+        if avoidance_duration >= 1500:  # 1.5 giây
+            # Kiểm tra ma có còn gần không
+            nearby_ghosts = self._check_ghosts_nearby(avoidance_radius=5)
+            if not nearby_ghosts:
+                return True
+                
+        # Nếu quá 2.5 giây thì ép buộc quay lại
+        if avoidance_duration >= 2500:  # 2.5 giây
+            return True
+            
+        return False
 
     def _is_dead_end(self, col, row):
-        """Kiểm tra xem vị trí có phải là dead end không (chỉ có 1 lối ra)"""
+        """Kiểm tra xem vị trí có phải là dead end không - cải thiện để tránh kẹt"""
         if not self.is_valid_position(col, row):
             return True
         
         valid_exits = 0
         directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # down, up, right, left
         
+        # Đếm số lối ra hợp lệ
         for dx, dy in directions:
             next_col, next_row = col + dx, row + dy
             if self.is_valid_position(next_col, next_row):
                 valid_exits += 1
         
-        return valid_exits <= 1  # Dead end if only 1 or 0 exits
+        # Cải thiện: chỉ coi là dead end nếu thực sự chỉ có 1 lối ra
+        # và lối ra đó không dẫn đến chỗ rộng rãi
+        if valid_exits <= 1:
+            return True
+        elif valid_exits == 2:
+            # Kiểm tra có phải corridor hẹp không (2 exits nhưng thẳng hàng)
+            exits = []
+            for dx, dy in directions:
+                next_col, next_row = col + dx, row + dy
+                if self.is_valid_position(next_col, next_row):
+                    exits.append((dx, dy))
+            
+            # Nếu 2 exits đối diện nhau (corridor thẳng), không coi là dead end
+            if len(exits) == 2:
+                dx1, dy1 = exits[0]
+                dx2, dy2 = exits[1]
+                if (dx1 + dx2 == 0 and dy1 + dy2 == 0):  # Đối diện nhau
+                    return False  # Không phải dead end, chỉ là corridor
+            
+            return True  # Góc cụt
+        
+        return False  # Đủ rộng rãi
 
-    def _find_smart_escape_path(self, start_col, start_row, dangerous_positions, max_depth=6):
-        """Tìm đường thoát thông minh tránh ghosts với lookahead và line of sight"""
-        import heapq
-        from collections import deque
-        
-        start = (start_row, start_col)  # (row, col) format
-        
-        # Tạo danger map với penalty - chỉ cho ghosts có line of sight
-        danger_map = {}
-        for danger_row, danger_col, original_dist in dangerous_positions:
-            # Kiểm tra line of sight trước khi tạo danger zone
-            if not self._has_line_of_sight(start, (danger_row, danger_col)):
-                continue  # Bỏ qua ghost bị tường cản
-                
-            # Tạo vùng nguy hiểm xung quanh ghost (chỉ những vị trí có line of sight)
-            for dr in range(-3, 4):  # 7x7 area around ghost
-                for dc in range(-3, 4):
-                    pos = (danger_row + dr, danger_col + dc)
-                    if self.is_valid_position(pos[1], pos[0]):  # col, row for is_valid_position
-                        # Kiểm tra line of sight từ ghost đến vị trí này
-                        if self._has_line_of_sight((danger_row, danger_col), pos):
-                            # Penalty giảm dần theo khoảng cách
-                            distance_from_danger = abs(dr) + abs(dc)
-                            penalty = max(0, 10 - distance_from_danger)  # Max penalty = 10
-                            danger_map[pos] = danger_map.get(pos, 0) + penalty
-        
-        # BFS với penalty để tìm đường an toàn
-        heap = [(0, 0, start, [start])]  # (total_cost, steps, position, path)
-        visited = set()
-        
-        while heap:
-            total_cost, steps, (row, col), path = heapq.heappop(heap)
-            
-            if (row, col) in visited or steps >= max_depth:
-                continue
-            visited.add((row, col))
-            
-            # Nếu đã đi đủ xa và ở vị trí an toàn, return path
-            if steps >= 3:  # Ít nhất 3 bước
-                danger_level = danger_map.get((row, col), 0)
-                if danger_level <= 2:  # Tương đối an toàn
-                    return path
-            
-            # Thử tất cả hướng di chuyển
-            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                new_row, new_col = row + dy, col + dx
-                new_pos = (new_row, new_col)
-                
-                if (new_pos not in visited and 
-                    self.is_valid_position(new_col, new_row) and
-                    not self._is_dead_end(new_col, new_row)):  # Tránh dead ends
-                    
-                    # Tính cost dựa trên danger level
-                    danger_penalty = danger_map.get(new_pos, 0)
-                    move_cost = 1 + danger_penalty
-                    new_total_cost = total_cost + move_cost
-                    new_path = path + [new_pos]
-                    
-                    heapq.heappush(heap, (new_total_cost, steps + 1, new_pos, new_path))
-        
-        return None  # Không tìm thấy đường thoát an toàn
-
-    def _check_ghosts_nearby(self, avoidance_radius=4):  # tăng từ 3 lên 4
-        """Kiểm tra ghosts với line of sight - chỉ phát hiện ma khi không bị tường cản"""
+    def _check_ghosts_nearby(self, avoidance_radius=4):
+        """
+        Kiểm tra ghosts với line of sight trong phạm vi 4 ô - tối ưu cho tốc độ xử lý
+        """
         pacman_row, pacman_col = int(self.pacman_pos[1]), int(self.pacman_pos[0])
         
         nearby_ghosts = []
@@ -1579,7 +2078,7 @@ class PacmanGame:
             ghost_row, ghost_col = int(ghost['pos'][1]), int(ghost['pos'][0])
             current_distance = abs(pacman_row - ghost_row) + abs(pacman_col - ghost_col)
             
-            # Kiểm tra ghost ở trong bán kính hiện tại
+            # Chỉ kiểm tra ghost trong phạm vi 4 ô (theo yêu cầu)
             if current_distance <= avoidance_radius:
                 # QUAN TRỌNG: Kiểm tra line of sight - có tường cản không?
                 if self._has_line_of_sight((pacman_row, pacman_col), (ghost_row, ghost_col)):
@@ -1588,8 +2087,8 @@ class PacmanGame:
                     # Ma bị tường cản, không coi là threat
                     continue
             
-            # THÊM: Dự đoán collision path - chỉ nếu có line of sight
-            if current_distance <= avoidance_radius + 1:  # Giảm vùng kiểm tra từ +3 xuống +1
+            # Dự đoán collision - chỉ cho ghost rất gần và có line of sight
+            if current_distance <= avoidance_radius + 1 and current_distance <= 3:
                 # Kiểm tra line of sight trước khi dự đoán
                 if not self._has_line_of_sight((pacman_row, pacman_col), (ghost_row, ghost_col)):
                     continue  # Bỏ qua ma bị tường cản
@@ -1597,10 +2096,10 @@ class PacmanGame:
                 ghost_direction = ghost.get('direction', [0, 0])
                 pacman_direction = self.pacman_direction
                 
-                # Dự đoán vị trí trong 2-3 bước tới
+                # Kiểm tra khả năng collision trong 2 bước tới (tối ưu tốc độ)
                 future_collision_risk = False
                 
-                for steps in range(1, 4):  # Kiểm tra 1-3 bước tới
+                for steps in range(1, 3):  # Chỉ kiểm tra 2 bước để tăng tốc độ
                     # Vị trí dự đoán của ghost
                     future_ghost_col = ghost_col + ghost_direction[0] * steps
                     future_ghost_row = ghost_row + ghost_direction[1] * steps
@@ -1612,21 +2111,50 @@ class PacmanGame:
                     # Kiểm tra khoảng cách trong tương lai
                     future_distance = abs(future_pacman_row - future_ghost_row) + abs(future_pacman_col - future_ghost_col)
                     
-                    if future_distance <= 2:  # Collision risk
-                        # Kiểm tra line of sight cho vị trí tương lai
+                    if future_distance <= 1:  # Collision risk cao
+                        # Kiểm tra nhanh line of sight cho vị trí tương lai
                         if (self.is_valid_position(future_ghost_col, future_ghost_row) and 
-                            self.is_valid_position(future_pacman_col, future_pacman_row) and
-                            self._has_line_of_sight((future_pacman_row, future_pacman_col), (future_ghost_row, future_ghost_col))):
-                            future_collision_risk = True
-                            break
+                            self.is_valid_position(future_pacman_col, future_pacman_row)):
+                            # Tính toán nhanh line of sight (simplified)
+                            if self._quick_line_of_sight_check((future_pacman_row, future_pacman_col), 
+                                                             (future_ghost_row, future_ghost_col)):
+                                future_collision_risk = True
+                                break
                 
-                # Nếu có nguy cơ collision, coi như ghost đang ở gần
-                if future_collision_risk and current_distance <= avoidance_radius + 1:  # Giảm từ +2 xuống +1
-                    effective_distance = max(1, current_distance - 1)  # Giảm penalty từ -2 xuống -1
-                    if ((ghost_row, ghost_col), effective_distance) not in nearby_ghosts:
-                        nearby_ghosts.append(((ghost_row, ghost_col), effective_distance))
-                        print(f"Predicted collision with ghost at ({ghost_row}, {ghost_col}) in {steps} steps!")
+                # Thêm ma có nguy cơ collision vào list
+                if future_collision_risk and ((ghost_row, ghost_col), current_distance) not in nearby_ghosts:
+                    nearby_ghosts.append(((ghost_row, ghost_col), current_distance - 0.5))  # Penalty nhỏ
+        
+        return nearby_ghosts
 
+    def _quick_line_of_sight_check(self, pos1, pos2):
+        """
+        Kiểm tra line of sight nhanh - tối ưu cho dự đoán tương lai
+        """
+        x1, y1 = pos1[1], pos1[0]  # col, row
+        x2, y2 = pos2[1], pos2[0]  # col, row
+        
+        # Khoảng cách ngắn - kiểm tra trực tiếp
+        if abs(x2 - x1) <= 1 and abs(y2 - y1) <= 1:
+            return True
+        
+        # Kiểm tra đường thẳng đơn giản (horizontal/vertical)
+        if x1 == x2:  # Vertical line
+            start_y, end_y = min(y1, y2), max(y1, y2)
+            for y in range(start_y + 1, end_y):
+                if not self.is_valid_position(x1, y):
+                    return False
+            return True
+        elif y1 == y2:  # Horizontal line  
+            start_x, end_x = min(x1, x2), max(x1, x2)
+            for x in range(start_x + 1, end_x):
+                if not self.is_valid_position(x, y1):
+                    return False
+            return True
+        
+        # Đường chéo - sử dụng thuật toán Bresenham đơn giản
+        return self._has_line_of_sight(pos1, pos2)
+        
         return nearby_ghosts
 
     def _has_line_of_sight(self, pos1, pos2):
@@ -1674,7 +2202,7 @@ class PacmanGame:
     def _find_fallback_target(self, pacman_pos, ghost_positions):
         """Find a safe fallback target when primary targets are unsafe - CẢI THIỆN"""
         try:
-            print(f"Tìm vị trí an toàn từ {pacman_pos}, tránh {len(ghost_positions)} ghosts...")
+            # print(f"Tìm vị trí an toàn từ {pacman_pos}, tránh {len(ghost_positions)} ghosts...")
             
             # Sử dụng Dijkstra với ghost avoidance để tìm target an toàn
             if hasattr(self, 'dijkstra'):
@@ -1723,7 +2251,7 @@ class PacmanGame:
                     
                     self.auto_target = best_pos
                     self.auto_path = best_path
-                    print(f"Fallback target: {best_pos} (score: {best_score:.2f}, path: {len(best_path)} steps)")
+                    # print(f"Fallback target: {best_pos} (score: {best_score:.2f}, path: {len(best_path)} steps)")
                     return
             
             # Fallback method nếu Dijkstra ghost avoidance không có
@@ -1766,7 +2294,7 @@ class PacmanGame:
                     best_pos = safe_positions[0][0]
                     
                     self.auto_target = best_pos
-                    print(f"Fallback target (normal): {best_pos} (safety: {safe_positions[0][1]})")
+                    # print(f"Fallback target (normal): {best_pos} (safety: {safe_positions[0][1]})")
                     self.calculate_auto_path()
                     return
             
@@ -1794,11 +2322,11 @@ class PacmanGame:
                         not self.is_wall(escape_pos[1], escape_pos[0])):
                         
                         self.auto_target = escape_pos
-                        print(f"Emergency escape to {escape_pos}")
+                        # print(f"Emergency escape to {escape_pos}")
                         self.calculate_auto_path()
                         return
             
-            print("Không tìm được vị trí an toàn nào!")
+            # print("Không tìm được vị trí an toàn nào!")
             self.auto_target = None
             self.auto_path = []
             
@@ -1808,12 +2336,7 @@ class PacmanGame:
             self.auto_path = []
             
             # Last resort: stay in place but keep looking
-            print(" No safe escape found, staying vigilant")
-            self.auto_target = pacman_pos
-            self.auto_path = [pacman_pos]
-            
-        except Exception as e:
-            print(f" Error in fallback target search: {e}")
+            # print(" No safe escape found, staying vigilant")
             self.auto_target = pacman_pos
             self.auto_path = [pacman_pos]
 
@@ -1831,14 +2354,14 @@ class PacmanGame:
 
         try:
             # Sử dụng thuật toán đơn giản: đường đi với tránh ma
-            avoidance_radius = getattr(config, 'GHOST_AVOIDANCE_RADIUS', 4)
+            avoidance_radius = getattr(config, 'GHOST_AVOIDANCE_RADIUS', 5)
             path, distance = self.dijkstra.shortest_path_with_ghost_avoidance(
                 pacman_pos, self.auto_target, ghost_positions, avoidance_radius=avoidance_radius
             )
 
             if path and distance < float('inf'):
                 self.auto_path = path
-                print(f"Path calculated: {len(path)-1} steps to {self.auto_target}")
+                # print(f"Path calculated: {len(path)-1} steps to {self.auto_target}")
                 return
 
         except Exception as e:
@@ -1850,12 +2373,12 @@ class PacmanGame:
             path, distance = self.dijkstra.shortest_path_with_bomb_avoidance(pacman_pos, self.auto_target, bomb_grid)
             if path and distance < float('inf'):
                 self.auto_path = path
-                print(f"Fallback path: {len(path)-1} steps to {self.auto_target} (avoiding bombs)")
+                # print(f"Fallback path: {len(path)-1} steps to {self.auto_target} (avoiding bombs)")
             else:
                 self.auto_path = []
-                print(" No path found")
+                # print(" No path found")
         except Exception as e:
-            print(f" Fallback path failed: {e}")
+            # print(f" Fallback path failed: {e}")
             self.auto_path = []
 
     def calculate_shortest_path_to_goal(self):
@@ -1873,12 +2396,36 @@ class PacmanGame:
             path, distance = self.dijkstra.shortest_path_with_bomb_avoidance(pacman_pos, self.current_goal, bomb_grid)
             if path and distance < float('inf'):
                 self.shortest_path = path
-                print(f"Shortest path calculated: {len(path)-1} steps to goal (avoiding {len(bomb_grid)} bombs)")
+                # print(f"Shortest path calculated: {len(path)-1} steps to goal (avoiding {len(bomb_grid)} bombs)")
             else:
                 self.shortest_path = []
-                print(" No path to goal found (considering bomb avoidance)")
+                # print(" No path to goal found (considering bomb avoidance)")
         except Exception as e:
-            print(f" Shortest path calculation failed: {e}")
+            # print(f" Shortest path calculation failed: {e}")
+            self.shortest_path = []
+
+    def calculate_hint_path_to_exit(self):
+        """Tính toán đường gợi ý từ vị trí Pacman hiện tại đến exit gate (có thể dùng bất cứ lúc nào)"""
+        pacman_col, pacman_row = int(round(self.pacman_pos[0])), int(round(self.pacman_pos[1]))
+        pacman_pos = (pacman_row, pacman_col)
+        
+        # Target là exit gate (goal chính của game)
+        exit_goal = self.goal if hasattr(self, 'goal') else None
+        if not exit_goal:
+            print("No exit gate found!")
+            self.shortest_path = []
+            return
+        
+        # Get bomb positions in grid coordinates
+        bomb_grid = self.get_bomb_grid_positions()
+        
+        try:
+            path, distance = self.dijkstra.shortest_path_with_bomb_avoidance(pacman_pos, exit_goal, bomb_grid)
+            if path and distance < float('inf'):
+                self.shortest_path = path
+            else:
+                self.shortest_path = []
+        except Exception as e:
             self.shortest_path = []
 
     def draw_shortest_path(self):
@@ -2063,7 +2610,7 @@ class PacmanGame:
     def move_pacman_auto(self):
         """GOAL-FIRST auto movement với ADVANCED GHOST AVOIDANCE - cải thiện thuật toán né ma"""
 
-        # Initialize auto mode variables
+        # Khởi tạo biến cho hệ thống né ma cải tiến
         if not hasattr(self, 'current_goal'):
             self.current_goal = None
         if not hasattr(self, 'goal_locked'):
@@ -2080,6 +2627,18 @@ class PacmanGame:
             self.turn_cooldown = 0
         if not hasattr(self, 'continuous_avoidance_count'):
             self.continuous_avoidance_count = 0
+        
+        # Biến mới cho hệ thống né ma trên đường đi tới goal
+        if not hasattr(self, 'path_avoidance_mode'):
+            self.path_avoidance_mode = False
+        if not hasattr(self, 'path_avoidance_start_time'):
+            self.path_avoidance_start_time = 0
+        if not hasattr(self, 'path_avoidance_direction'):
+            self.path_avoidance_direction = None
+        if not hasattr(self, 'original_goal_path'):
+            self.original_goal_path = []
+        if not hasattr(self, 'temporary_avoidance_target'):
+            self.temporary_avoidance_target = None
 
         # Decrease cooldown
         if self.goal_cooldown > 0:
@@ -2087,99 +2646,159 @@ class PacmanGame:
 
         current_time = pygame.time.get_ticks()
 
-        # Initialize nearby_ghosts to ensure it's always defined
+        # KIỂM TRA MA TRÊN ĐƯỜNG ĐI TỚI GOAL - Tính năng mới
+        if self.current_goal and not self.path_avoidance_mode and not getattr(self, 'escape_mode', False):
+            has_ghost_on_path, ghost_pos, ghost_distance = self._check_ghost_on_path_to_goal()
+            
+            if has_ghost_on_path and ghost_distance <= 6:  # Ma trong phạm vi 6 ô trên path
+                print(f"⚠️  Ma phát hiện trên đường đi tới goal! Khoảng cách: {ghost_distance}")
+                
+                # Tìm ngã rẽ gần nhất để tránh
+                avoidance_direction = self._find_nearest_turn_from_path()
+                
+                if avoidance_direction:
+                    # Bắt đầu chế độ né ma tạm thời
+                    self._start_path_avoidance(avoidance_direction)
+                    self.pacman_next_direction = avoidance_direction
+                    return
+                else:
+                    # Nếu không tìm được ngã rẽ, dùng emergency avoidance
+                    nearby_ghosts = self._check_ghosts_nearby(avoidance_radius=4)
+                    if nearby_ghosts and self._emergency_ghost_avoidance(nearby_ghosts):
+                        return
+
+        # KIỂM TRA QUAY LẠI ĐƯỜNG ĐI GỐC
+        if self.path_avoidance_mode and self._should_return_to_original_path():
+            self.path_avoidance_mode = False
+            self.path_avoidance_start_time = 0
+            self.path_avoidance_direction = None
+            
+            # Khôi phục đường đi gốc
+            if hasattr(self, 'original_goal_path') and self.original_goal_path:
+                self.auto_path = self.original_goal_path.copy()
+                print("🔄 Quay lại đường đi gốc tới goal")
+            
+            # Tính toán lại đường đi nếu cần
+            if self.current_goal:
+                self.calculate_path_to_goal()
+
+        # XỬ LÝ TRONG CHẾ ĐỘ NÉ MA TREN ĐƯỜNG ĐI
+        if self.path_avoidance_mode:
+            # Tiếp tục di chuyển theo hướng né ma
+            if self.path_avoidance_direction:
+                pacman_row, pacman_col = int(self.pacman_pos[1]), int(self.pacman_pos[0])
+                next_col = pacman_col + self.path_avoidance_direction[0]
+                next_row = pacman_row + self.path_avoidance_direction[1]
+                
+                # Kiểm tra có thể tiếp tục đi theo hướng này không
+                if self.is_valid_position(next_col, next_row):
+                    self.pacman_next_direction = self.path_avoidance_direction
+                    return
+                else:
+                    # Gặp tường, tìm hướng khác
+                    alternative_directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+                    for alt_dir in alternative_directions:
+                        alt_col = pacman_col + alt_dir[0]
+                        alt_row = pacman_row + alt_dir[1]
+                        if self.is_valid_position(alt_col, alt_row):
+                            self.path_avoidance_direction = alt_dir
+                            self.pacman_next_direction = alt_dir
+                            return
+
+        # Initialize nearby_ghosts và ghost checking
         nearby_ghosts = []
+        
+        # Throttle ghost checking to reduce computational load (check every 60ms for fast response)  
+        should_check_ghosts = (current_time - self.last_ghost_check) > 60
+        if should_check_ghosts:
+            self.last_ghost_check = current_time
+            # Kiểm tra ghosts trong bán kính 4 ô theo yêu cầu
+            nearby_ghosts = self._check_ghosts_nearby(avoidance_radius=4)
 
         # ESCAPE MODE: Kiểm tra nếu đang trong chế độ thoát hiểm
         if getattr(self, 'escape_mode', False):
             self.escape_steps += 1
-            print(f"ESCAPE MODE: Bước {self.escape_steps}/{self.min_escape_distance}")
             
-            # Kiểm tra xem đã đi đủ xa chưa
-            if self.escape_steps >= self.min_escape_distance:
+            # Giảm thời gian escape để Pacman không bị kẹt lâu
+            max_escape_steps = getattr(self, 'min_escape_distance', 3)  # Mặc định 3 bước
+            
+            # Kiểm tra xem đã đi đủ xa chưa hoặc quá lâu
+            if self.escape_steps >= max_escape_steps:
                 # Kiểm tra xem có ghost nào ở gần không
-                nearby_ghosts = self._check_ghosts_nearby(avoidance_radius=4)
-                if not nearby_ghosts:
-                    # An toàn, thoát escape mode và tìm đường mới đến goal
+                if should_check_ghosts:
+                    nearby_ghosts = self._check_ghosts_nearby(avoidance_radius=4)
+                if not nearby_ghosts or self.escape_steps >= max_escape_steps * 2:  # Giảm multiplier để thoát nhanh hơn
+                    # An toàn hoặc quá lâu, thoát escape mode
                     self.escape_mode = False
                     self.escape_steps = 0
-                    print("ESCAPE MODE OFF - Tìm đường mới đến goal!")
+                    print("Escape complete - resuming to goal")
                     
-                    # Tìm đường thay thế đến goal
+                    # Tìm đường thay thế đến goal (không spam log)
                     if not self.find_alternative_path_to_goal():
                         # Nếu không tìm được đường thay thế, tìm goal mới
                         self.find_simple_goal()
                         if self.current_goal:
                             self.calculate_path_to_goal()
                 else:
-                    # Vẫn có ghost gần, tiếp tục escape
-                    print("Vẫn có ghost gần, tiếp tục escape...")
+                    # Vẫn có ghost gần nhưng không in quá nhiều log
+                    pass
             else:
-                # Không phải lúc kiểm tra escape distance, vẫn cần check ghosts
-                nearby_ghosts = self._check_ghosts_nearby(avoidance_radius=4)
+                # Kiểm tra ghost ít thường xuyên trong escape mode
+                if should_check_ghosts:
+                    nearby_ghosts = self._check_ghosts_nearby(avoidance_radius=4)  # Tăng từ 2 lên 4
             
             # Trong escape mode, tiếp tục di chuyển theo hướng hiện tại
-            # hoặc tìm hướng an toàn
             if nearby_ghosts:
                 min_distance = min(d for _, d in nearby_ghosts)
-                if min_distance <= 2:  # Vẫn quá gần, tìm hướng khác
+                if min_distance <= 1:  # Chỉ khi CỰC gần mới emergency
                     if self._emergency_ghost_avoidance(nearby_ghosts):
                         return
-            # Nếu không có ghost gần hoặc không cần emergency, tiếp tục theo path hiện tại
 
-        # SIÊU NHANH: Kiểm tra ghosts mỗi 30ms (33 lần/giây) để phản ứng cực nhanh
-        if current_time - self.last_ghost_check > 30:
-            self.last_ghost_check = current_time
-
-            # Kiểm tra ghosts trong bán kính 4 ô - phát hiện sớm hơn
-            nearby_ghosts = self._check_ghosts_nearby(avoidance_radius=4)
-
-            if nearby_ghosts:
-                min_distance = min(d for _, d in nearby_ghosts)
-                print(f"Phát hiện {len(nearby_ghosts)} ghost(s)! Khoảng cách gần nhất: {min_distance}")
+        # GHOST AVOIDANCE: Chỉ kiểm tra khi cần thiết
+        if nearby_ghosts:
+            min_distance = min(d for _, d in nearby_ghosts)
+            # Chỉ in log khi thực sự rất nguy hiểm - comment để game mượt
+            # if min_distance <= 2:
+            #     print(f"GHOST ALERT! Distance: {min_distance}")
+            
+            # PRIORITY 1: Emergency avoidance khi ghost gần (trong 4 ô)
+            if min_distance <= 4:  # Phạm vi phát hiện 4 ô theo yêu cầu
+                # Xử lý khẩn cấp: ưu tiên ngã rẽ, tránh quay đầu liên tục
+                if self._emergency_ghost_avoidance(nearby_ghosts):
+                    return  # Đã xử lý thành công, thoát ngay
                 
-                # PRIORITY 1: Emergency avoidance nếu ghost rất gần (trong 4 ô)
-                if min_distance <= 4:
-                    self.continuous_avoidance_count += 1
-                    
-                    # Xử lý khẩn cấp: quay đầu hoặc rẽ ngã gần nhất
-                    if self._emergency_ghost_avoidance(nearby_ghosts):
-                        print(f"Emergency avoidance successful! (Count: {self.continuous_avoidance_count})")
-                        return  # Đã xử lý thành công, thoát ngay
-                    else:
-                        print("Emergency avoidance failed, activating complex avoidance...")
-                        
-                # PRIORITY 2: Activate complex avoidance cho ghost ở khoảng cách trung bình
-                if min_distance <= 4 or self.ghost_avoidance_active:  # tăng lên 4 ô
+                # PRIORITY 2: Complex avoidance chỉ khi ghost RẤT gần
+                if min_distance <= 2 or self.ghost_avoidance_active:  # Giảm từ 3 xuống 2
                     if not self.ghost_avoidance_active:
                         self.ghost_avoidance_active = True
                         pacman_pos = (int(self.pacman_pos[1]), int(self.pacman_pos[0]))
                         ghost_positions = [(int(g['pos'][1]), int(g['pos'][0])) for g in self.ghosts 
                                           if not g.get('scared', False)]
 
-                        print("Kích hoạt chế độ né tránh ghosts phức tạp!")
+                        # Chỉ in log khi kích hoạt lần đầu
+                        print("🚨 Ghost avoidance activated!")
                         self._find_fallback_target(pacman_pos, ghost_positions)
                     
-                    # Kiểm tra xem có cần update fallback target không
-                    elif self.continuous_avoidance_count % 3 == 0:  # Mỗi 3 lần kiểm tra
+                    # Giảm tần suất update để tránh lag và spam
+                    elif self.continuous_avoidance_count % 10 == 0:  # Từ 5 lên 10 lần để ít spam hơn
                         pacman_pos = (int(self.pacman_pos[1]), int(self.pacman_pos[0]))
                         ghost_positions = [(int(g['pos'][1]), int(g['pos'][0])) for g in self.ghosts 
                                           if not g.get('scared', False)]
-                        print("Updating fallback target...")
+                        # Không print log nữa để tránh spam
                         self._find_fallback_target(pacman_pos, ghost_positions)
             else:
-                # Không có ghost ở gần (> 4 ô), reset counter và tắt chế độ avoidance
+                # Không có ghost ở gần, reset counter và tắt chế độ avoidance  
                 if self.ghost_avoidance_active or self.continuous_avoidance_count > 0:
                     self.ghost_avoidance_active = False
                     self.continuous_avoidance_count = 0
                     self.auto_path = []  # Xóa đường đi avoidance cũ
-                    print("Ma đã đi xa (>4 ô), tiếp tục đi đến goal ban đầu")
+                    print("Safe zone - returning to goal")
 
         # Nếu đang trong chế độ ghost avoidance phức tạp, kiểm tra trạng thái
         if self.ghost_avoidance_active:
-            nearby_ghosts = self._check_ghosts_nearby(avoidance_radius=4)
+            nearby_ghosts = self._check_ghosts_nearby(avoidance_radius=5)  # Chỉ tăng lên 5 cho safe zone check
             if not nearby_ghosts:
-                # Đã an toàn (ma đi xa >4 ô), quay lại goal chính
+                # Đã an toàn (ma đi xa >6 ô), quay lại goal chính
                 self.ghost_avoidance_active = False
                 self.goal_locked = False  # Cho phép tìm goal mới
                 self.auto_path = []  # Xóa đường đi avoidance cũ
@@ -2208,26 +2827,42 @@ class PacmanGame:
         if self.current_goal and not self.ghost_avoidance_active:
             self.move_goal_focused()
         elif self.ghost_avoidance_active:
-            # Nếu đang trong chế độ avoidance, ưu tiên auto_path
+            # Nếu đang trong chế độ avoidance, ưu tiên auto_path với improved following
             if hasattr(self, 'auto_path') and self.auto_path and len(self.auto_path) > 1:
                 pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
                 current_pos = (pacman_row, pacman_col)
                 
-                try:
-                    current_index = self.auto_path.index(current_pos)
-                    if current_index + 1 < len(self.auto_path):
-                        next_pos = self.auto_path[current_index + 1]
-                        direction = [next_pos[1] - pacman_col, next_pos[0] - pacman_row]
+                # Cải thiện path following - tìm điểm gần nhất trong path thay vì exact match
+                best_index = -1
+                min_distance = float('inf')
+                
+                for i, path_pos in enumerate(self.auto_path):
+                    dist = abs(current_pos[0] - path_pos[0]) + abs(current_pos[1] - path_pos[1])
+                    if dist < min_distance:
+                        min_distance = dist
+                        best_index = i
+                
+                # Nếu tìm được vị trí gần nhất trong path
+                if best_index >= 0 and best_index + 1 < len(self.auto_path):
+                    # Nếu quá xa path hiện tại, nhảy đến điểm gần nhất
+                    if min_distance > 2:
+                        next_pos = self.auto_path[best_index]
+                    else:
+                        next_pos = self.auto_path[best_index + 1]
+                    
+                    direction = [next_pos[1] - pacman_col, next_pos[0] - pacman_row]
+                    
+                    # Đảm bảo direction hợp lệ (chỉ di chuyển 1 ô mỗi lần)
+                    if abs(direction[0]) <= 1 and abs(direction[1]) <= 1:
                         self.pacman_next_direction = direction
-                        print(f"Following avoidance path: {direction}")
                         return
-                except ValueError:
-                    # Không tìm thấy vị trí hiện tại trong path, tính toán lại
-                    print("Current position not in avoidance path, recalculating...")
-                    pacman_pos = (int(self.pacman_pos[1]), int(self.pacman_pos[0]))
-                    ghost_positions = [(int(g['pos'][1]), int(g['pos'][0])) for g in self.ghosts 
-                                      if not g.get('scared', False)]
-                    self._find_fallback_target(pacman_pos, ghost_positions)
+                
+                # Fallback: nếu path không hợp lệ, tính toán lại
+                print("Path following failed, recalculating...")
+                pacman_pos = (int(self.pacman_pos[1]), int(self.pacman_pos[0]))
+                ghost_positions = [(int(g['pos'][1]), int(g['pos'][0])) for g in self.ghosts 
+                                  if not g.get('scared', False)]
+                self._find_fallback_target(pacman_pos, ghost_positions)
 
     def find_alternative_path_to_goal(self):
         """Tìm đường khác đến goal khi đường hiện tại không an toàn"""
@@ -2272,7 +2907,7 @@ class PacmanGame:
         # 1. EXIT GATE ONLY - Chỉ đi đến exit gate
         if hasattr(self, 'exit_gate'):
             self.current_goal = self.exit_gate
-            print(f"GOAL-ONLY: Exit gate at {self.exit_gate}")
+            # print(f"GOAL-ONLY: Exit gate at {self.exit_gate}")
             return
 
         # 2. Nếu không có exit gate, tạo goal cố định ở góc đối diện
@@ -2292,7 +2927,7 @@ class PacmanGame:
                         self.maze[test_row, test_col] == 0):  # Valid path
                         self.exit_gate = (test_row, test_col)
                         self.current_goal = self.exit_gate
-                        print(f" GOAL-ONLY: Created exit gate at {self.exit_gate}")
+                        # print(f" GOAL-ONLY: Created exit gate at {self.exit_gate}")
                         return
 
         # 3. Fallback: goal ở center nếu không tìm được gì
@@ -2300,10 +2935,10 @@ class PacmanGame:
         center_col = self.maze_gen.width // 2
         if self.is_valid_position(center_col, center_row):
             self.current_goal = (center_row, center_col)
-            print(f" GOAL-ONLY: Center goal at {self.current_goal}")
+            # print(f" GOAL-ONLY: Center goal at {self.current_goal}")
         else:
             self.current_goal = None
-            print(" GOAL-ONLY: No valid goal found")
+            # print(" GOAL-ONLY: No valid goal found")
 
     def move_goal_focused(self):
         """GOAL-FOCUSED movement - Chỉ tập trung vào goal, không ăn dots ngẫu nhiên"""
@@ -2335,11 +2970,11 @@ class PacmanGame:
                     next_pos = self.shortest_path[current_index + 1]
                     direction = [next_pos[1] - pacman_col, next_pos[0] - pacman_row]
                     self.pacman_next_direction = direction
-                    print(f"Following shortest path: {direction}")
+                    # print(f"Following shortest path: {direction}")
                     return
             except ValueError:
                 # Không tìm thấy vị trí hiện tại trong path, tính toán lại
-                print("Current position not in shortest path, recalculating...")
+                # print("Current position not in shortest path, recalculating...")
                 pass
 
         # Fallback: sử dụng auto_path nếu có (đã tính với ghost avoidance)
@@ -2676,17 +3311,6 @@ class PacmanGame:
         # Check if reached
         if abs(pacman_col - goal_col) < 1 and abs(pacman_row - goal_row) < 1:
             return True
-        
-        #  DISABLED: Không kiểm tra dots/pellets nữa
-        # # Check if goal is still valid (dot/pellet still exists)
-        # goal_screen_pos = (goal_col * self.cell_size + self.cell_size // 2,
-        #                   goal_row * self.cell_size + self.cell_size // 2)
-        #
-        # # Check if it's still in dots or power_pellets
-        # return (goal_screen_pos not in self.dots and 
-        #         goal_screen_pos not in self.power_pellets)
-        
-        # Goal luôn valid vì chỉ đi đến exit gate
         return False
 
     def has_reached_target(self):
@@ -2740,9 +3364,12 @@ class PacmanGame:
                 self.power_pellets.remove(pellet)
                 self.score += 50
 
+                # Play wakawaka sound for power pellet
+                if hasattr(self, 'wakawaka_sound') and self.wakawaka_sound:
+                    self.wakawaka_sound.play()
+
                 # Set power mode for 10 seconds
                 self.power_mode_end_time = pygame.time.get_ticks() + 5000  # 10 seconds
-                print("Power mode activated! Ghosts can be eaten for 10 seconds")
 
                 # Make all ghosts frightened for 10 seconds
                 for ghost in self.ghosts:
@@ -2763,22 +3390,35 @@ class PacmanGame:
 
         # CHỈ KIỂM TRA: Ghosts collision
         for ghost in self.ghosts:
+            # Skip if ghost is already eaten in this frame
+            if ghost.get('eaten', False):
+                continue
+                
             ghost_center = (ghost['pos'][0] * self.cell_size + self.cell_size // 2,
                           ghost['pos'][1] * self.cell_size + self.cell_size // 2)
             distance = math.hypot(pacman_center[0] - ghost_center[0],
                                 pacman_center[1] - ghost_center[1])
             if distance < 15:
+                # print(f"Ghost collision detected! Ghost: {ghost['name']}, Scared: {ghost.get('scared', False)}, Distance: {distance:.1f}")
                 if ghost.get('scared', False):
                     # Eat scared ghost for points
                     self.score += 200
-                    print(f" Ate {ghost['name']} ghost! +200 points")
-                    # Reset ghost position
-                    ghost['pos'] = [float(self.start[1]), float(self.start[0])]
+                    print(f"Ate {ghost['name']} ghost! +200 points")
+                    
+                    # Play wakawaka sound for eating ghost
+                    if hasattr(self, 'wakawaka_sound') and self.wakawaka_sound:
+                        self.wakawaka_sound.play()
+                    
+                    # Set ghost to eaten state (only eyes visible)
+                    ghost['eaten'] = True
                     ghost['scared'] = False
                     ghost['scared_timer'] = 0
+                    # Ghost will move back to spawn as eyes
+                    # IMPORTANT: Break after eating one ghost to avoid multiple collisions in same frame
+                    break
                 else:
                     # Normal ghost collision - lose life but keep score
-                    print(f"Pacman touched a ghost! Lost a life. Lives remaining: {self.lives - 1}")
+                    print(f"Pacman touched a normal ghost! Lost a life. Lives remaining: {self.lives - 1}")
                     self.lives -= 1
                     if self.lives <= 0:
                         self.game_state = "game_over"
@@ -2786,6 +3426,8 @@ class PacmanGame:
                     else:
                         # Reset positions but keep score and game state
                         self.reset_positions_after_death()
+                    # IMPORTANT: Break after losing life to avoid multiple deaths in same frame
+                    break
 
         # Check exit gate collision (WIN CONDITION)
         if hasattr(self, 'exit_gate'):
@@ -2966,7 +3608,7 @@ class PacmanGame:
             if event.type == pygame.QUIT:
                 self.running = False
             elif event.type == pygame.KEYDOWN:
-                print(f"Key pressed: {pygame.key.name(event.key)}")
+                # print(f"Key pressed: {pygame.key.name(event.key)}")
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
                 elif event.key == pygame.K_p:
@@ -2976,11 +3618,12 @@ class PacmanGame:
                 elif event.key == pygame.K_h:
                     self.show_shortest_path = not self.show_shortest_path
                     if self.show_shortest_path:
-                        self.calculate_shortest_path_to_goal()
-                        print("Shortest path visualization: ON")
+                        # Luôn hiển thị đường đi đến EXIT GATE (goal chính)
+                        self.calculate_hint_path_to_exit()
+                        # print("Hint path to EXIT: ON (Press H to toggle)")
                     else:
                         self.shortest_path = []
-                        print("Shortest path visualization: OFF")
+                        # print("Hint path visualization: OFF")
                 elif event.key == pygame.K_e:
                     self.set_escape_target()
                 elif event.key == pygame.K_r:
@@ -3016,7 +3659,7 @@ class PacmanGame:
         # Reset Pacman properties
         self.pacman_direction = [0, 0]
         self.pacman_next_direction = [0, 0]
-        self.pacman_speed = 2  
+        self.pacman_speed = config.PACMAN_LEGACY_SPEED  # Use config value
         self.pacman_animation = 1
         self.pacman_mouth_open = True
 
@@ -3161,6 +3804,8 @@ class PacmanGame:
     def update(self):
         """Update game state"""
         current_time = pygame.time.get_ticks()
+        self.delta_time = (current_time - self.last_update) / 1000.0  # Convert to seconds
+        self.last_update = current_time
 
         # ENSURE AUTO MODE STAYS OFF UNLESS EXPLICITLY ENABLED BY USER
         if self.auto_mode and not hasattr(self, '_user_enabled_auto'):
@@ -3178,27 +3823,52 @@ class PacmanGame:
                 self.move_pacman()
                 
             self.move_ghosts()
-            self.check_collisions()
-
-            # Update ghost scared timers
+            
+            # Update ghost scared timers BEFORE collision check
             for ghost in self.ghosts:
                 if ghost.get('scared', False):
                     ghost['scared_timer'] -= 1
                     if ghost['scared_timer'] <= 0:
                         ghost['scared'] = False
                         ghost['scared_timer'] = 0
+                        # print(f"{ghost['name']} ghost is no longer scared!")
+            
+            # Check collisions AFTER timer updates
+            self.check_collisions()
 
-            # Update shortest path visualization (recalculate every 30 frames)
+            # Update shortest path visualization (recalculate less frequently to reduce lag)
             current_time = pygame.time.get_ticks()
-            if self.show_shortest_path and current_time - self.last_path_calculation > 500:  # 500ms
-                self.calculate_shortest_path_to_goal()
+            # Update hint path periodically when showing it
+            if self.show_shortest_path and current_time - self.last_path_calculation > 1000:  # 1000ms instead of 500ms
+                self.calculate_hint_path_to_exit()  # Use hint path function
                 self.last_path_calculation = current_time
 
-            # Animate Pacman mouth - làm chậm lại để ít quay hơn
+            # Animate Pacman mouth - faster animation for snappier feel
             self.animation_timer += 1
-            if self.animation_timer >= 20:  # tăng từ 10 lên 20 để chậm hơn
+            if self.animation_timer >= 8:  #Faster animation pacman mouth
                 self.pacman_mouth_open = not self.pacman_mouth_open
                 self.animation_timer = 0
+
+    def draw_ghost_return_paths(self):
+        """Draw the return paths for eaten ghosts (eyes only)"""
+        for ghost in self.ghosts:
+            if ghost.get('eaten', False) and hasattr(ghost, 'return_path') and ghost['return_path']:
+                path = ghost['return_path']
+                
+                # Draw path with dotted white line
+                for i, (row, col) in enumerate(path):
+                    center = ((col + 0.5) * self.cell_size, (row + 0.5) * self.cell_size)
+                    
+                    # Draw smaller dots for ghost return path
+                    if i % 2 == 0:  # Draw every other dot for dotted effect
+                        pygame.draw.circle(self.screen, (200, 200, 200), center, 2)  # Light gray
+                
+                # Highlight current target waypoint
+                if hasattr(ghost, 'path_index') and ghost['path_index'] < len(path):
+                    target_waypoint = path[ghost['path_index']]
+                    target_row, target_col = target_waypoint
+                    target_center = ((target_col + 0.5) * self.cell_size, (target_row + 0.5) * self.cell_size)
+                    pygame.draw.circle(self.screen, (255, 255, 255), target_center, 4)  # White target
 
     def draw(self):
         """Draw everything"""
@@ -3208,6 +3878,7 @@ class PacmanGame:
         self.draw_bombs()
         self.draw_exit_gate()  # Draw exit gate
         self.draw_shortest_path()  # Draw shortest path to goal
+        self.draw_ghost_return_paths()  # Draw return paths for eaten ghosts
         # self.draw_auto_path()  #  REMOVED: Xóa tính năng show path
         self.draw_pacman()
         self.draw_ghosts()

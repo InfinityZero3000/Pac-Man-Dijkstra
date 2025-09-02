@@ -34,7 +34,7 @@ Chạy game trực tiếp:
 python maze_game.py
 ```
 
-## 🔧 Cấu hình nâng cao
+## Cấu hình nâng cao
 
 Có thể điều chỉnh trong `maze_game.py`:
 
