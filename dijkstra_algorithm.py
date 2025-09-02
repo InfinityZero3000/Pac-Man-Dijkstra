@@ -693,7 +693,7 @@ class DijkstraAlgorithm:
             if obj_type == 'exit':
                 priority = 100 - danger_level * 5 - distance * 0.3
             else:
-                # ❌ DISABLED: Không ưu tiên power pellets và dots nữa
+                # DISABLED: Không ưu tiên power pellets và dots nữa
                 # if obj_type == 'power_pellet':
                 #     priority = 100 - danger_level * 10 - distance * 0.5
                 # elif obj_type == 'dot':
@@ -767,7 +767,7 @@ class DijkstraAlgorithm:
     def _tactical_detour_strategy(self, start, target, ghost_positions, 
                                  priority_weight, extra_data):
         """Path that collects items along the way - DISABLED: Không thu thập items nữa"""
-        # ❌ DISABLED: Không thu thập dots/pellets nữa, chỉ đi thẳng đến target
+        # DISABLED: Không thu thập dots/pellets nữa, chỉ đi thẳng đến target
         # if not extra_data:
         #     return self._ghost_avoidance_strategy(start, target, ghost_positions, priority_weight)
         #
@@ -879,7 +879,7 @@ class DijkstraAlgorithm:
 
     def _calculate_collection_bonus(self, path, dots, pellets):
         """Calculate bonus score for items that would be collected along path - DISABLED"""
-        # ❌ DISABLED: Không tính bonus cho việc thu thập dots/pellets nữa
+        # DISABLED: Không tính bonus cho việc thu thập dots/pellets nữa
         # bonus = 0
         # path_set = set(path)
         #

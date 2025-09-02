@@ -1,18 +1,18 @@
-# 🎮 Maze Game - AI Pathfinding with Dijkstra Algorithm
+# Maze Game - AI Pathfinding with Dijkstra Algorithm
 
 Một trò chơi mê cung thông minh được xây dựng bằng Python và Pygame, sử dụng thuật toán Dijkstra để tìm đường đi tối ưu. Game mô phỏng phong cách Pacman với khả năng tạo mê cung ngẫu nhiên và hiển thị đường đi thông minh.
 
-## ✨ Tính năng chính
+## Tính năng chính
 
-- 🏗️ **Tạo mê cung ngẫu nhiên**: Sử dụng thuật toán DFS với đảm bảo kết nối
-- 🎯 **Tìm đường thông minh**: Thuật toán Dijkstra/A* với heuristic Manhattan
-- 🎨 **Giao diện đồ họa**: Pygame với hiệu ứng mượt mà và màu sắc rõ ràng
-- 🕹️ **Điều khiển trực quan**: Di chuyển bằng phím mũi tên, tìm đường bằng Space
-- 🔄 **Làm mới tự động**: Tạo mê cung mới nếu không có đường đi
-- 🛡️ **Kiểm tra hợp lệ**: Đảm bảo đường đi không xuyên qua tường
-- 📊 **Thống kê chi tiết**: Hiển thị số bước và thời gian thực hiện
+- **Tạo mê cung ngẫu nhiên**: Sử dụng thuật toán DFS với đảm bảo kết nối
+- **Tìm đường thông minh**: Thuật toán Dijkstra/A* với heuristic Manhattan
+- **Giao diện đồ họa**: Pygame với hiệu ứng mượt mà và màu sắc rõ ràng
+- **Điều khiển trực quan**: Di chuyển bằng phím mũi tên, tìm đường bằng Space
+- **Làm mới tự động**: Tạo mê cung mới nếu không có đường đi
+- **Kiểm tra hợp lệ**: Đảm bảo đường đi không xuyên qua tường
+- **Thống kê chi tiết**: Hiển thị số bước và thời gian thực hiện
 
-## 📋 Yêu cầu hệ thống
+## Yêu cầu hệ thống
 
 Cài đặt các package cần thiết:
 
@@ -26,7 +26,7 @@ Hoặc cài đặt thủ công:
 pip install pygame numpy
 ```
 
-## 🚀 Cách chạy
+## Cách chạy
 
 Chạy game trực tiếp:
 
