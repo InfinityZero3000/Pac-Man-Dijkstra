@@ -34,7 +34,7 @@ pip install pygame numpy
 Chạy game trực tiếp:
 
 ```bash
-python maze_game.py
+python pacman_game.py
 ```
 
 ## Cấu hình nâng cao
