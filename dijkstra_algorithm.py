@@ -479,12 +479,12 @@ class DijkstraAlgorithm:
         }
         return None, float('inf')
 
-    def _log_successful_path_bomb_avoidance(self, start, goal, path, distance, explored, dt_ms, bomb_positions):
-        """Log successful path with bomb avoidance"""
+    def _log_successful_path_bomb_radius(self, start, goal, path, distance, explored, dt_ms, bomb_positions):
+        """Log successful path with bomb radius avoidance"""
         log_entry = {
             'timestamp': datetime.now().isoformat(),
             'session_id': self.session_id,
-            'algorithm': 'Dijkstra_with_Bomb_Avoidance',
+            'algorithm': 'Dijkstra_with_Bomb_Radius',
             'start': start,
             'goal': goal,
             'path': path,
@@ -1180,6 +1180,7 @@ class DijkstraAlgorithm:
         self.log_data.append(entry)
 
     def _log_error(self, error_type, error_data):
+        """Log error and display warning for bomb-related path blocking"""
         self.log_data.append({
             'session_id': self.session_id,
             'timestamp': datetime.now().isoformat(),
@@ -1187,6 +1188,61 @@ class DijkstraAlgorithm:
             'error_type': error_type,
             'error_data': error_data,
         })
+        
+        # Display warning for bomb-related path blocking
+        if 'BOMB' in error_type:
+            if error_type == 'GOAL_UNREACHABLE_BOMB_AVOIDANCE':
+                print("⚠️ Bom chặn tất cả đường!")
+            elif error_type == 'GOAL_UNREACHABLE_BOMB_RADIUS':
+                print("⚠️ Bán kính bom quá rộng!")
+            elif error_type == 'GOAL_UNREACHABLE_BOMB_PENALTY':
+                print("⚠️ Chi phí bom quá cao!")
+            elif error_type == 'INVALID_PATH_BOMB_AVOIDANCE':
+                print("⚠️ Tuyến đường bị phá hủy!")
+            elif error_type == 'INVALID_PATH_BOMB_RADIUS':
+                print("⚠️ Đường đi quá nguy hiểm!")
+            elif error_type == 'INVALID_PATH_BOMB_PENALTY':
+                print("⚠️ Tuyến đường rủi ro!")
+
+    def check_bomb_blockage_status(self, start, goal, bomb_positions=None):
+        """
+        Kiểm tra và cảnh báo về tình trạng bị bom chặn đường
+        Returns: (is_blocked, blockage_level, alternative_count)
+        """
+        if not bomb_positions:
+            return False, 'SAFE', 0
+            
+        # Thử pathfinding thông thường (không tránh bom)
+        normal_path, _ = self.shortest_path(start, goal, enable_logging=False)
+        
+        # Thử pathfinding với bomb avoidance
+        safe_path, _ = self.shortest_path_with_bomb_avoidance(start, goal, bomb_positions, enable_logging=False)
+        
+        # Thử pathfinding với bomb radius avoidance  
+        radius_path, _ = self.shortest_path_with_bomb_radius_avoidance(start, goal, bomb_positions, enable_logging=False)
+        
+        # Phân tích mức độ chặn
+        if not normal_path and not safe_path and not radius_path:
+            print("🚨 Tất cả đường bị chặn!")
+            return True, 'COMPLETE_BLOCKAGE', 0
+            
+        elif normal_path and not safe_path:
+            print("⚠️ Chỉ có đường nguy hiểm!")
+            print(f"   💣 Đường nguy hiểm qua: {len(bomb_positions)} vùng bom")
+            print(f"   ⚡ Khuyến nghị: Di chuyển thận trọng hoặc đợi")
+            return True, 'DANGEROUS_PATH_ONLY', 1
+            
+        elif safe_path and not normal_path:
+            print("✅ Tìm được đường tránh bom!")
+            return False, 'SAFE_DETOUR', 1
+            
+        else:
+            alternative_count = sum([1 for path in [normal_path, safe_path, radius_path] if path])
+            if alternative_count > 1:
+                # print(f"✅ NHIỀU LỰA CHỌN: {alternative_count} tuyến đường khả dụng")  # Reduced verbosity
+                # print(f"   📍 Từ: {start} → Đến: {goal}")  # Reduced verbosity
+                pass
+            return False, 'MULTIPLE_OPTIONS', alternative_count
 
     def _get_maze_hash(self):
         return hashlib.md5(self.maze_gen.maze.tobytes()).hexdigest()

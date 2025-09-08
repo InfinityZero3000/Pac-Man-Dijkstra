@@ -43,6 +43,69 @@ class PacmanAI:
         # Advanced tracking
         self.continuous_avoidance_count = 0
     
+    def check_bomb_threat_level(self, target_position=None):
+        """
+        Kiểm tra mức độ đe dọa của bom đối với đường đi
+        
+        Args:
+            target_position: Vị trí mục tiêu, nếu None thì dùng current goal
+            
+        Returns:
+            dict: {'threat_level': str, 'is_blocked': bool, 'alternatives': int, 'warning': str}
+        """
+        if not hasattr(self.game, 'dijkstra'):
+            return {'threat_level': 'UNKNOWN', 'is_blocked': False, 'alternatives': 0, 'warning': 'No pathfinding available'}
+        
+        # Lấy vị trí Pacman hiện tại
+        pacman_row, pacman_col = int(self.game.pacman_pos[1]), int(self.game.pacman_pos[0])
+        pacman_pos = (pacman_row, pacman_col)
+        
+        # Xác định mục tiêu
+        if target_position is None:
+            target_position = getattr(self.game, 'current_goal', None)
+        
+        if not target_position:
+            return {'threat_level': 'NO_TARGET', 'is_blocked': False, 'alternatives': 0, 'warning': 'No target specified'}
+        
+        # Lấy vị trí bom
+        bomb_positions = self.game.get_bomb_grid_positions() if hasattr(self.game, 'get_bomb_grid_positions') else []
+        
+        if not bomb_positions:
+            return {'threat_level': 'SAFE', 'is_blocked': False, 'alternatives': 3, 'warning': 'No bombs detected'}
+        
+        try:
+            # Sử dụng phương thức kiểm tra bomb blockage từ dijkstra
+            is_blocked, blockage_level, alternatives = self.game.dijkstra.check_bomb_blockage_status(
+                pacman_pos, target_position, bomb_positions
+            )
+            
+            # Tạo warning message chi tiết
+            warning_messages = {
+                'COMPLETE_BLOCKAGE': f"🆘 TẤT CẢ ĐƯỜNG ĐI BỊ CHẶN! {len(bomb_positions)} bom cản trở hoàn toàn.",
+                'DANGEROUS_PATH_ONLY': f"⚠️  CHỈ CÓN ĐƯỜNG NGUY HIỂM! Phải đi qua {len(bomb_positions)} vùng bom.",
+                'SAFE_DETOUR': f"✅ Tìm thấy đường tránh an toàn, dài hơn nhưng tránh được {len(bomb_positions)} bom.",
+                'MULTIPLE_OPTIONS': f"✅ Có {alternatives} lựa chọn đường đi khác nhau.",
+                'SAFE': "✅ Không có bom cản trở đường đi."
+            }
+            
+            return {
+                'threat_level': blockage_level,
+                'is_blocked': is_blocked,
+                'alternatives': alternatives,
+                'warning': warning_messages.get(blockage_level, f"Unknown threat level: {blockage_level}"),
+                'bomb_count': len(bomb_positions),
+                'pacman_pos': pacman_pos,
+                'target_pos': target_position
+            }
+            
+        except Exception as e:
+            return {
+                'threat_level': 'ERROR', 
+                'is_blocked': True, 
+                'alternatives': 0, 
+                'warning': f"Error checking bomb threat: {e}"
+            }
+    
     def set_escape_target(self):
         """Set target to exit gate for emergency escape"""
         if hasattr(self.game, 'exit_gate'):
@@ -56,6 +119,18 @@ class PacmanAI:
         ENHANCED Emergency ghost avoidance với adaptive response và anti-loop mechanism
         """
         current_time = pygame.time.get_ticks()
+
+        # Kiểm tra tình trạng bom chặn đường trước khi thực hiện ghost avoidance
+        bomb_threat = self.check_bomb_threat_level()
+        if bomb_threat['threat_level'] == 'COMPLETE_BLOCKAGE':
+            print(f"🚨 CẢNH BÁO KHẨN CẤP: Pacman bị kẹt giữa ma và bom!")
+            print(f"   👻 Ma đuổi: {len(nearby_ghosts)} con")
+            print(f"   💣 Bom chặn: {bomb_threat['bomb_count']} quả") 
+            print(f"   ⚡ Tình huống: NÓT THẮT SINH TỬ!")
+        elif bomb_threat['threat_level'] == 'DANGEROUS_PATH_ONLY':
+            print(f"⚠️  NGUY HIỂM KÉP: Ma đuổi + chỉ có đường qua bom!")
+            print(f"   👻 Số ma: {len(nearby_ghosts)}")
+            print(f"   💣 Phải qua: {bomb_threat['bomb_count']} vùng bom")
 
         # Khởi tạo biến nếu chưa có
         if not hasattr(self, 'last_emergency_turn'):
