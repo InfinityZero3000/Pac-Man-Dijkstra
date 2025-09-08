@@ -39,7 +39,7 @@ python pacman_game.py
 
 ## Cấu hình nâng cao
 
-Có thể điều chỉnh trong `maze_game.py`:
+Có thể điều chỉnh trong `pacman_game.py`:
 
 ```python
 # Thay đổi kích thước mê cung
@@ -89,7 +89,7 @@ self.RED = (255, 0, 0)      # Path
   - Ưu tiên rẽ sớm vs giữ thẳng: rẽ sớm giảm rủi ro “đối đầu” trong hành lang thẳng.
   - Dự đoán hướng di chuyển vs tĩnh: giảm tai nạn ở giao lộ, khi ma thay đổi chế độ.
 
-### 3) Sinh và hợp thức hoá môi trường chơi (`maze_game.py`)
+### 3) Sinh và hợp thức hoá môi trường chơi (`pacman_game.py`)
 
 - Chức năng chính
   - Sinh mê cung (`MazeGenerator`) với độ phức tạp điều chỉnh; chọn cổng thoát ở vị trí đối đỉnh hợp lệ.
