@@ -42,6 +42,16 @@ class PacmanAI:
         
         # Advanced tracking
         self.continuous_avoidance_count = 0
+        
+        # Enhanced anti-loop mechanism - NEW
+        self.escape_direction_history = []
+        self.last_escape_time = 0
+        self.escape_timeout_count = 0
+        self.stuck_prevention_timer = 0
+        self.force_movement_counter = 0
+        
+        # Performance tracking
+        self.recent_deaths = 0
     
     def check_bomb_threat_level(self, target_position=None):
         """
@@ -149,29 +159,50 @@ class PacmanAI:
             self.last_escape_time = 0
         if not hasattr(self, 'escape_timeout_count'):
             self.escape_timeout_count = 0
+        if not hasattr(self, 'stuck_prevention_timer'):
+            self.stuck_prevention_timer = 0
+        if not hasattr(self, 'force_movement_counter'):
+            self.force_movement_counter = 0
 
-        # ANTI-LOOP MECHANISM - Detect if stuck in escape loop
-        if len(self.escape_direction_history) > 5:
+        # ENHANCED ANTI-LOOP MECHANISM - Detect if stuck in escape loop
+        if len(self.escape_direction_history) > 4:  # Reduced from 5 to 4 for faster detection
             # Check if repeating same direction too much
-            recent_directions = self.escape_direction_history[-6:]
-            if len(set(map(tuple, recent_directions))) <= 2:  # Only 1-2 unique directions
-                print(f"🔄 ESCAPE LOOP DETECTED! Clearing history and trying new strategy")
+            recent_directions = self.escape_direction_history[-5:]  # Check last 5 instead of 6
+            unique_directions = len(set(map(tuple, recent_directions)))
+            
+            if unique_directions <= 2:  # Only 1-2 unique directions = LOOP
+                print(f"🔄 ESCAPE LOOP DETECTED! Unique dirs: {unique_directions}")
                 self.escape_direction_history.clear()
                 self.escape_timeout_count += 1
-                # Force longer cooldown to break the loop
-                adaptive_cooldown = 100 + (self.escape_timeout_count * 50)
+                self.stuck_prevention_timer = current_time
+                # MUCH longer cooldown to break the loop effectively
+                adaptive_cooldown = 400 + (self.escape_timeout_count * 100)  # Increased from 150+75 to 400+100
+                print(f"🚫 Extended cooldown: {adaptive_cooldown}ms, timeout count: {self.escape_timeout_count}")
             else:
-                # Normal adaptive cooldown
-                base_cooldown = 30 if self.consecutive_turns <= 1 else 60
-                adaptive_cooldown = max(10, base_cooldown - (self.recent_deaths * 5))
+                # Normal adaptive cooldown - increased base values
+                base_cooldown = 80 if self.consecutive_turns <= 1 else 120  # Increased from 30/60 to 80/120
+                adaptive_cooldown = max(50, base_cooldown - (self.recent_deaths * 10))  # Increased min from 10 to 50
         else:
-            base_cooldown = 30 if self.consecutive_turns <= 1 else 60
-            adaptive_cooldown = max(10, base_cooldown - (self.recent_deaths * 5))
+            base_cooldown = 80 if self.consecutive_turns <= 1 else 120  # Increased from 30/60 to 80/120
+            adaptive_cooldown = max(50, base_cooldown - (self.recent_deaths * 10))  # Increased min from 10 to 50
         
         if current_time - self.last_emergency_turn < adaptive_cooldown:
             return False
 
         pacman_row, pacman_col = int(self.game.pacman_pos[1]), int(self.game.pacman_pos[0])
+        
+        # FORCED MOVEMENT MECHANISM - If stuck too long, force a movement
+        time_since_last_escape = current_time - self.last_escape_time
+        if (time_since_last_escape > 1000 and  # Reduced from 2000ms to 1000ms (1 second)
+            self.escape_timeout_count > 1):  # Reduced from 2 to 1 for faster intervention
+            print(f"⚡ FORCED MOVEMENT ACTIVATED! Time since escape: {time_since_last_escape}ms")
+            self.force_movement_counter += 1
+            # Force a random valid movement to break deadlock
+            success = self._force_emergency_movement(pacman_row, pacman_col, current_time)
+            if success:
+                self.last_escape_time = current_time
+                self.stuck_prevention_timer = current_time
+                return True
         
         # ENHANCED THREAT ANALYSIS với priority scoring
         danger_analysis = []
@@ -211,6 +242,7 @@ class PacmanAI:
                 self.escape_direction_history.append(chosen_direction)
                 if len(self.escape_direction_history) > 10:
                     self.escape_direction_history.pop(0)  # Keep only recent 10
+                self.last_escape_time = current_time  # Update escape time
                 return True
         
         # LEVEL 2: HIGH DANGER (4-5 ô với moderate threat)
@@ -221,6 +253,7 @@ class PacmanAI:
                 self.escape_direction_history.append(chosen_direction)
                 if len(self.escape_direction_history) > 10:
                     self.escape_direction_history.pop(0)
+                self.last_escape_time = current_time  # Update escape time
                 return True
         
         # LEVEL 3: MODERATE DANGER (6+ ô với low threat) - Preventive action
@@ -231,6 +264,7 @@ class PacmanAI:
                 self.escape_direction_history.append(chosen_direction)
                 if len(self.escape_direction_history) > 10:
                     self.escape_direction_history.pop(0)
+                self.last_escape_time = current_time  # Update escape time
                 return True
         
         return False
@@ -474,8 +508,23 @@ class PacmanAI:
     def _calculate_enhanced_safety_score(self, test_row, test_col, danger_analysis, 
                                        current_row, current_col, direction):
         """
-        ENHANCED safety score calculation với comprehensive threat assessment
+        ENHANCED safety score calculation với comprehensive threat assessment + CACHING
         """
+        # Add simple caching to avoid recalculating same positions
+        cache_key = (test_row, test_col, len(danger_analysis))
+        current_time = pygame.time.get_ticks()
+        
+        if not hasattr(self, 'score_cache'):
+            self.score_cache = {}
+        if not hasattr(self, 'score_cache_time'):
+            self.score_cache_time = {}
+            
+        # Use cached result if it's recent (within 100ms)
+        if (cache_key in self.score_cache and 
+            cache_key in self.score_cache_time and
+            current_time - self.score_cache_time[cache_key] < 100):
+            return self.score_cache[cache_key]
+        
         score = 0
         
         # 1. Multi-ghost distance analysis
@@ -512,7 +561,7 @@ class PacmanAI:
             
             # Check if moving away from ghost
             current_dist = abs(current_row - ghost_row) + abs(current_col - ghost_col)
-            new_dist = abs(test_row - ghost_row) + abs(test_col - test_col)
+            new_dist = abs(test_row - ghost_row) + abs(test_col - ghost_col)
             
             if new_dist > current_dist:
                 score += 8  # Bonus for increasing distance
@@ -529,6 +578,10 @@ class PacmanAI:
                 score += 3  # Bonus for breaking line of sight
         
         score -= total_los_penalty
+        
+        # Cache the result for future use
+        self.score_cache[cache_key] = score
+        self.score_cache_time[cache_key] = current_time
         
         return score
 
@@ -1655,3 +1708,49 @@ class PacmanAI:
             print(f" Path safety validation failed: {dangerous_positions}/{total_positions} dangerous positions ({danger_ratio:.2%})")
         
         return is_safe
+
+    def _force_emergency_movement(self, pacman_row, pacman_col, current_time):
+        """
+        Force an emergency movement when Pacman is stuck in loops
+        This is a last resort to break deadlocks
+        """
+        import random
+        
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # down, up, right, left
+        valid_moves = []
+        
+        # Find all valid moves
+        for dx, dy in directions:
+            new_col, new_row = pacman_col + dx, pacman_row + dy
+            if self.game.is_valid_position(new_col, new_row):
+                # Check basic safety (not into immediate ghost)
+                is_safe = True
+                for ghost in self.game.ghosts:
+                    ghost_row, ghost_col = int(ghost['pos'][1]), int(ghost['pos'][0])
+                    distance = abs(new_row - ghost_row) + abs(new_col - ghost_col)
+                    if distance <= 1:  # Too close
+                        is_safe = False
+                        break
+                
+                if is_safe:
+                    valid_moves.append((dx, dy))
+        
+        if valid_moves:
+            # Choose a random valid move to break predictability
+            chosen_direction = random.choice(valid_moves)
+            dx, dy = chosen_direction
+            
+            print(f"🎯 FORCED EMERGENCY MOVE: [{dx}, {dy}] from {len(valid_moves)} options")
+            
+            self.game.pacman_next_direction = [dx, dy]
+            self.last_emergency_turn = current_time
+            self._update_turn_tracking((dx, dy))
+            
+            # Reset escape tracking
+            self.escape_direction_history.clear()
+            self.escape_timeout_count = max(0, self.escape_timeout_count - 1)  # Reduce count after forced move
+            
+            return True
+        
+        print(f"❌ FORCED MOVEMENT FAILED: No safe moves available")
+        return False

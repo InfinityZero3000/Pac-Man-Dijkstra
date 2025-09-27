@@ -135,11 +135,18 @@ class PacmanGame:
         self.shortest_path = []
         self.last_path_calculation = 0
 
-        # Game timing
+        # Game timing - FPS independent movement
+        self.target_fps = config.TARGET_FPS  # Use configurable FPS
         self.last_update = pygame.time.get_ticks()
         self.delta_time = 0  
+        self.max_delta_time = config.MAX_DELTA_TIME  # Cap for large frame times
         self.animation_timer = 0
         self.auto_update_timer = 0
+        
+        # Performance monitoring
+        self.fps_history = []
+        self.show_fps_info = False  # Toggle with F key
+        self.collision_checks_per_frame = 0  # Track collision performance
 
     def generate_level(self):
         """Generate maze with Pacman-style layout"""
@@ -856,6 +863,10 @@ class PacmanGame:
         level_text = self.font.render(f"Level: {self.level}", True, self.WHITE)
         self.screen.blit(level_text, (350, ui_y))
 
+        # FPS and performance info (top-right corner)
+        if self.show_fps_info:
+            self.draw_fps_info()
+
         # Instructions
         if self.game_state == "playing":
             mode_text = "AUTO" if self.auto_mode else "MANUAL"
@@ -869,7 +880,7 @@ class PacmanGame:
                 path_steps = len(self.shortest_path) - 1 if self.shortest_path else 0
                 path_info = f" | Path: {path_steps} steps"
             
-            inst_text = self.font.render(f"{mode_text} | {ghost_info}{path_info} | A: Toggle Auto | H: Hint Path | P: Pause | R: Restart", True, self.YELLOW)
+            inst_text = self.font.render(f"{mode_text} | {ghost_info}{path_info} | A: Auto | H: Hint | F: FPS | D: Speed | P: Pause | R: Restart", True, self.YELLOW)
             self.screen.blit(inst_text, (10, ui_y + 30))
 
         elif self.game_state == "paused":
@@ -881,6 +892,88 @@ class PacmanGame:
 
         elif self.game_state == "level_complete":
             self.draw_win_notification()
+
+    def draw_fps_info(self):
+        """Draw FPS and performance information in top-right corner"""
+        if not self.fps_history:
+            return
+            
+        # Calculate FPS statistics
+        current_fps = self.fps_history[-1] if self.fps_history else 0
+        avg_fps = sum(self.fps_history) / len(self.fps_history)
+        min_fps = min(self.fps_history)
+        max_fps = max(self.fps_history)
+        
+        # Draw performance info background
+        info_width = 200
+        info_height = 160  # Increased for collision info
+        info_x = self.screen_width - info_width - 10
+        info_y = 10
+        
+        # Semi-transparent background
+        bg_surface = pygame.Surface((info_width, info_height))
+        bg_surface.set_alpha(180)
+        bg_surface.fill((0, 0, 0))
+        self.screen.blit(bg_surface, (info_x, info_y))
+        
+        # Border
+        pygame.draw.rect(self.screen, self.WHITE, (info_x, info_y, info_width, info_height), 2)
+        
+        # FPS information
+        small_font = pygame.font.SysFont("arial", 14, bold=True)
+        y_offset = info_y + 10
+        
+        # Current FPS (larger, colored)
+        fps_color = self.WHITE
+        if current_fps < 30:
+            fps_color = self.RED
+        elif current_fps < 50:
+            fps_color = self.ORANGE
+        else:
+            fps_color = (0, 255, 0)  # Green
+            
+        current_text = small_font.render(f"FPS: {current_fps:.1f}", True, fps_color)
+        self.screen.blit(current_text, (info_x + 10, y_offset))
+        
+        # Target FPS
+        target_text = small_font.render(f"Target: {self.target_fps}", True, self.WHITE)
+        self.screen.blit(target_text, (info_x + 110, y_offset))
+        
+        # Average FPS
+        y_offset += 20
+        avg_text = small_font.render(f"Avg: {avg_fps:.1f}", True, self.WHITE)
+        self.screen.blit(avg_text, (info_x + 10, y_offset))
+        
+        # Min/Max FPS
+        y_offset += 20
+        min_text = small_font.render(f"Min: {min_fps:.1f}", True, self.WHITE)
+        self.screen.blit(min_text, (info_x + 10, y_offset))
+        
+        max_text = small_font.render(f"Max: {max_fps:.1f}", True, self.WHITE)
+        self.screen.blit(max_text, (info_x + 110, y_offset))
+        
+        # Delta time
+        y_offset += 20
+        delta_text = small_font.render(f"Delta: {self.delta_time*1000:.1f}ms", True, self.WHITE)
+        self.screen.blit(delta_text, (info_x + 10, y_offset))
+        
+        # Movement speeds
+        y_offset += 20
+        dynamic_status = "ON" if config.ENABLE_DYNAMIC_SPEED else "OFF"
+        speed_text = small_font.render(f"Speed: P{config.PACMAN_SPEED} G{config.GHOST_SPEED}", True, self.YELLOW)
+        self.screen.blit(speed_text, (info_x + 10, y_offset))
+        
+        # Dynamic speed status
+        y_offset += 15
+        dynamic_color = (0, 255, 0) if config.ENABLE_DYNAMIC_SPEED else self.RED
+        dynamic_text = small_font.render(f"Dynamic: {dynamic_status}", True, dynamic_color)
+        self.screen.blit(dynamic_text, (info_x + 10, y_offset))
+        
+        # Collision performance
+        y_offset += 15
+        collision_color = (0, 255, 0) if self.collision_checks_per_frame < 50 else self.ORANGE if self.collision_checks_per_frame < 200 else self.RED
+        collision_text = small_font.render(f"Checks: {self.collision_checks_per_frame}", True, collision_color)
+        self.screen.blit(collision_text, (info_x + 10, y_offset))
 
     def draw_win_notification(self):
         """Draw a beautiful win notification box with score and congratulations"""
@@ -1099,30 +1192,35 @@ class PacmanGame:
 
             # Check if we can move to target block (allowing movement through eyes)
             if self.is_valid_position_ignore_eyes(target_col, target_row):
-                # DYNAMIC SPEED CONTROL - slow down when near ghosts for better reaction time
-                base_speed = config.PACMAN_SPEED  # Use config value
+                # Speed calculation - configurable dynamic speed control
+                base_speed = config.PACMAN_SPEED
                 
-                # Calculate distance to nearest ghost
-                min_ghost_distance = float('inf')
-                for ghost in self.ghosts:
-                    if not self.is_ghost_just_eyes(ghost):  # Only consider active ghosts
-                        ghost_row = int(round(ghost['pos'][1]))
-                        ghost_col = int(round(ghost['pos'][0]))
-                        distance = abs(current_row - ghost_row) + abs(current_col - ghost_col)
-                        min_ghost_distance = min(min_ghost_distance, distance)
-                
-                # Adjust speed based on ghost proximity
-                if min_ghost_distance <= 2:
-                    speed_multiplier = 0.3  # Very slow when ghost is very close
-                elif min_ghost_distance <= 4:
-                    speed_multiplier = 0.6  # Slow when ghost is close
-                elif min_ghost_distance <= 6:
-                    speed_multiplier = 0.8  # Slightly slow when ghost is nearby
+                if config.ENABLE_DYNAMIC_SPEED:
+                    # Calculate distance to nearest ghost
+                    min_ghost_distance = float('inf')
+                    for ghost in self.ghosts:
+                        if not self.is_ghost_just_eyes(ghost):  # Only consider active ghosts
+                            ghost_row = int(round(ghost['pos'][1]))
+                            ghost_col = int(round(ghost['pos'][0]))
+                            distance = abs(current_row - ghost_row) + abs(current_col - ghost_col)
+                            min_ghost_distance = min(min_ghost_distance, distance)
+                    
+                    # Apply speed multiplier based on ghost proximity (improved values)
+                    if min_ghost_distance <= 2:
+                        speed_multiplier = config.DYNAMIC_SPEED_VERY_CLOSE  # Less severe slowdown
+                    elif min_ghost_distance <= 4:
+                        speed_multiplier = config.DYNAMIC_SPEED_CLOSE
+                    elif min_ghost_distance <= 6:
+                        speed_multiplier = config.DYNAMIC_SPEED_NEARBY
+                    else:
+                        speed_multiplier = 1.0  # Normal speed when safe
+                    
+                    speed = base_speed * speed_multiplier
                 else:
-                    speed_multiplier = 1.0  # Normal speed when safe
+                    # No dynamic speed - always use full speed
+                    speed = base_speed
                 
-                adjusted_speed = base_speed * speed_multiplier
-                step_size = adjusted_speed * self.delta_time  # Distance to move this frame
+                step_size = speed * self.delta_time  # Distance to move this frame
                 
                 # Move towards target position
                 if abs(self.pacman_pos[0] - target_col) > 0.01:
@@ -2241,12 +2339,13 @@ class PacmanGame:
         return None
 
     def move_pacman_auto(self):
-        """GOAL-FIRST auto movement với ADVANCED GHOST AVOIDANCE - cải thiện thuật toán né ma"""
+        """GOAL-FIRST auto movement với ADVANCED GHOST AVOIDANCE - sử dụng AI mới"""
 
-        # EMERGENCY STOP MECHANISM - Check for critical ghost proximity FIRST
+        # CHECK FOR GHOST AVOIDANCE USING NEW AI SYSTEM
         pacman_row, pacman_col = int(self.pacman_pos[1]), int(self.pacman_pos[0])
-        critical_ghosts = []
         
+        # Get nearby ghosts for AI analysis
+        nearby_ghosts = []
         for ghost in self.ghosts:
             if ghost.get('scared', False) or ghost.get('eaten', False):
                 continue
@@ -2254,20 +2353,41 @@ class PacmanGame:
             ghost_row, ghost_col = int(ghost['pos'][1]), int(ghost['pos'][0])
             distance = abs(pacman_row - ghost_row) + abs(pacman_col - ghost_col)
             
-            # Critical distance threshold - immediate danger
-            if distance <= 2:
+            # Consider ghosts within reasonable range for AI analysis
+            if distance <= 8:  # Increased range for better AI analysis
+                nearby_ghosts.append(((ghost_row, ghost_col), distance))
+        
+        # Use NEW AI system for ghost avoidance if there are nearby ghosts
+        # Add AI throttling to prevent excessive direction changes
+        if not hasattr(self, 'last_ai_call'):
+            self.last_ai_call = 0
+        if not hasattr(self, 'ai_decision_cooldown'):
+            self.ai_decision_cooldown = 200  # 200ms cooldown between AI decisions
+            
+        current_time = pygame.time.get_ticks()
+        ai_can_act = (current_time - self.last_ai_call) >= self.ai_decision_cooldown
+        
+        if nearby_ghosts and hasattr(self, 'pacman_ai') and ai_can_act:
+            try:
+                ai_handled = self.pacman_ai.emergency_ghost_avoidance(nearby_ghosts)
+                if ai_handled:
+                    print(f"🤖 AI xử lý né ma: {len(nearby_ghosts)} ma gần đó")
+                    self.last_ai_call = current_time  # Update AI call time
+                    return  # AI has handled the situation
+            except Exception as e:
+                print(f"❌ AI error: {e}")
+                # Fall back to simple emergency logic below
+        
+        # EMERGENCY FALLBACK - Simple emergency stop for critical proximity (≤ 1 cell)
+        critical_ghosts = []
+        for ghost_pos, distance in nearby_ghosts:
+            if distance <= 1:  # Only immediate collision threat
                 critical_ghosts.append({
-                    'ghost': ghost,
                     'distance': distance,
-                    'position': (ghost_row, ghost_col)
+                    'position': ghost_pos
                 })
         
-        # EMERGENCY STOP - If ghost is critically close (≤ 2 cells)
         if critical_ghosts:
-            # Stop immediately and find emergency escape direction
-            self.pacman_direction = [0, 0]  # Stop movement
-            self.pacman_next_direction = [0, 0]
-            
             # Find immediate escape direction away from all critical ghosts
             escape_directions = [[1, 0], [-1, 0], [0, 1], [0, -1]]
             best_escape = None
@@ -2292,11 +2412,11 @@ class PacmanGame:
                     best_escape = direction
             
             if best_escape:
-                print(f"🚨 {len(critical_ghosts)} ma cận kề, thoát!")
+                print(f"🚨 EMERGENCY: {len(critical_ghosts)} ma va chạm, thoát ngay!")
                 self.pacman_next_direction = best_escape
                 return
             else:
-                print("🚨 Không tìm được lối thoát!")
+                print("🚨 EMERGENCY: Không tìm được lối thoát!")
                 return
 
         # Khởi tạo biến cho hệ thống né ma cải tiến
@@ -2397,8 +2517,8 @@ class PacmanGame:
         # Initialize nearby_ghosts và ghost checking
         nearby_ghosts = []
         
-        # Throttle ghost checking to reduce computational load (check every 60ms for fast response)  
-        should_check_ghosts = (current_time - self.last_ghost_check) > 60
+        # Throttle ghost checking to reduce computational load (check every 150ms instead of 60ms)  
+        should_check_ghosts = (current_time - self.last_ghost_check) > 150
         if should_check_ghosts:
             self.last_ghost_check = current_time
             # Kiểm tra ghosts trong bán kính 4 ô theo yêu cầu
@@ -2440,8 +2560,13 @@ class PacmanGame:
             if nearby_ghosts:
                 min_distance = min(d for _, d in nearby_ghosts)
                 if min_distance <= 1:  # Chỉ khi CỰC gần mới emergency
-                    if self.pacman_ai.emergency_ghost_avoidance(nearby_ghosts):
-                        return
+                    # Add emergency throttling to prevent spam
+                    if not hasattr(self, 'last_emergency_call'):
+                        self.last_emergency_call = 0
+                    if (current_time - self.last_emergency_call) >= 100:  # 100ms cooldown for emergency
+                        if self.pacman_ai.emergency_ghost_avoidance(nearby_ghosts):
+                            self.last_emergency_call = current_time
+                            return
 
         # GHOST AVOIDANCE: Chỉ kiểm tra khi cần thiết
         if nearby_ghosts:
@@ -3142,20 +3267,50 @@ class PacmanGame:
         return True
 
     def check_collisions(self):
-        """Check collisions with ghosts ONLY - không ăn dots/pellets"""
+        """Optimized collision detection with spatial partitioning"""
         pacman_center = (self.pacman_pos[0] * self.cell_size + self.cell_size // 2,
                         self.pacman_pos[1] * self.cell_size + self.cell_size // 2)
 
-        # Check dots
+        # OPTIMIZED: Only check dots within reasonable distance (2 cells = 60 pixels)
+        max_check_distance = config.COLLISION_CHECK_DISTANCE if hasattr(config, 'COLLISION_CHECK_DISTANCE') else 60
+        
+        # Reset collision counter
+        self.collision_checks_per_frame = 0
+        
+        # Check dots with early distance filtering
         for dot in self.dots[:]:
-            distance = math.hypot(pacman_center[0] - dot[0], pacman_center[1] - dot[1])
+            # Quick distance check first (cheaper than hypot)
+            dx = abs(pacman_center[0] - dot[0])
+            dy = abs(pacman_center[1] - dot[1])
+            
+            # Skip if obviously too far (Manhattan distance check) - NO INCREMENT HERE
+            if dx > max_check_distance or dy > max_check_distance:
+                continue
+            
+            # Only count if we actually do the expensive calculation
+            self.collision_checks_per_frame += 1
+                
+            # Only calculate exact distance for nearby dots
+            distance = math.hypot(dx, dy)
             if distance < 10:
                 self.dots.remove(dot)
                 self.score += 10
 
-        # Check power pellets
+        # Check power pellets with same optimization
         for pellet in self.power_pellets[:]:
-            distance = math.hypot(pacman_center[0] - pellet[0], pacman_center[1] - pellet[1])
+            # Quick distance check first
+            dx = abs(pacman_center[0] - pellet[0])
+            dy = abs(pacman_center[1] - pellet[1])
+            
+            # Skip if obviously too far - NO INCREMENT HERE
+            if dx > max_check_distance or dy > max_check_distance:
+                continue
+            
+            # Only count if we actually do the expensive calculation
+            self.collision_checks_per_frame += 1
+                
+            # Only calculate exact distance for nearby pellets
+            distance = math.hypot(dx, dy)
             if distance < 10:
                 self.power_pellets.remove(pellet)
                 self.score += 50
@@ -3172,7 +3327,7 @@ class PacmanGame:
                     ghost['scared'] = True
                     ghost['scared_timer'] = 600  # 10 seconds at 60 FPS
 
-        # Check bombs collision - lose life if hit
+        # Check bombs collision - lose life if hit (less frequent, so keep as is)
         for bomb in self.bombs[:]:
             distance = math.hypot(pacman_center[0] - bomb[0], pacman_center[1] - bomb[1])
             if distance < 12:  # Bomb collision distance
@@ -3450,6 +3605,13 @@ class PacmanGame:
                     else:
                         self.shortest_path = []
                         # print("Hint path visualization: OFF")
+                elif event.key == pygame.K_f:
+                    self.show_fps_info = not self.show_fps_info
+                    print(f"FPS info: {'ON' if self.show_fps_info else 'OFF'}")
+                elif event.key == pygame.K_d:
+                    config.ENABLE_DYNAMIC_SPEED = not config.ENABLE_DYNAMIC_SPEED
+                    status = "ON" if config.ENABLE_DYNAMIC_SPEED else "OFF"
+                    print(f"Dynamic speed control: {status}")
                 elif event.key == pygame.K_e:
                     self.pacman_ai.set_escape_target()
                 elif event.key == pygame.K_r:
@@ -3633,10 +3795,20 @@ class PacmanGame:
         print("New game created successfully!")
 
     def update(self):
-        """Update game state"""
+        """Update game state with FPS-independent movement"""
         current_time = pygame.time.get_ticks()
-        self.delta_time = (current_time - self.last_update) / 1000.0  # Convert to seconds
+        raw_delta_time = (current_time - self.last_update) / 1000.0  # Convert to seconds
+        
+        # Cap delta time to prevent huge jumps when paused/lagging
+        self.delta_time = min(raw_delta_time, self.max_delta_time)
         self.last_update = current_time
+        
+        # Track FPS for performance monitoring
+        if raw_delta_time > 0:
+            current_fps = 1.0 / raw_delta_time
+            self.fps_history.append(current_fps)
+            if len(self.fps_history) > 60:  # Keep last 60 frames
+                self.fps_history.pop(0)
 
         # ENSURE AUTO MODE STAYS OFF UNLESS EXPLICITLY ENABLED BY USER
         if self.auto_mode and not hasattr(self, '_user_enabled_auto'):
@@ -3714,6 +3886,11 @@ class PacmanGame:
         self.draw_pacman()
         self.draw_ghosts()
         self.draw_ui()
+        
+        # Draw FPS info if enabled
+        if self.show_fps_info:
+            self.draw_fps_info()
+            
         pygame.display.flip()
 
     def toggle_auto_mode(self):
@@ -3733,13 +3910,13 @@ class PacmanGame:
             self.pacman_next_direction = [0, 0]
 
     def run(self):
-        """Main game loop"""
+        """Main game loop with configurable FPS"""
         try:
             while self.running:
                 self.handle_events()
                 self.update()
                 self.draw()
-                self.clock.tick(60)
+                self.clock.tick(self.target_fps)  # Use configurable FPS
         except KeyboardInterrupt:
             print("\nGame interrupted by user")
         except Exception as e:

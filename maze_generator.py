@@ -3,7 +3,7 @@ import numpy as np
 
 class MazeGenerator:
     def __init__(self, width=21, height=21, complexity=0.25):
-        self.width = width if width % 2 == 1 else width + 1  # Ensure odd size
+        self.width = width if width % 2 == 1 else width + 1 
         self.height = height if height % 2 == 1 else height + 1
         self.complexity = complexity  # Controls how many paths are created (0.5-1.0)
         self.maze = np.ones((self.height, self.width), dtype=int)
