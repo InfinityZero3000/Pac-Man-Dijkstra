@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+ #!/usr/bin/env python3
 """
 Debug script để test và cải thiện thuật toán né ma
 """

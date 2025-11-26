@@ -18,6 +18,7 @@ class DijkstraAlgorithm:
         self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._height, self._width = self.maze_gen.maze.shape
         self.last_run_stats = None
+        self.last_nodes_explored = 0  # Quick access to nodes explored
         self.validator = PathValidator(maze_generator)
         
         # Advanced pathfinding state
@@ -84,6 +85,7 @@ class DijkstraAlgorithm:
                     'computation_time_ms': dt_ms,
                     'success': True,
                 }
+                self.last_nodes_explored = explored  # Quick access
                 return clean_path, len(clean_path) - 1  # Return step count as distance
 
             if g > dist.get(node, float('inf')):
@@ -105,6 +107,7 @@ class DijkstraAlgorithm:
             'computation_time_ms': (datetime.now() - t0).total_seconds() * 1000,
             'success': False,
         }
+        self.last_nodes_explored = explored  # Quick access
         return None, float('inf')
 
     def shortest_path_with_ghost_avoidance(self, start, goal, ghost_positions, avoidance_radius=3, enable_logging=True):

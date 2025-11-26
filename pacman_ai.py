@@ -10,6 +10,7 @@ class PacmanAI:
     - Thuật toán né ma (ghost avoidance)
     - Tìm đường đi an toàn (pathfinding with safety)
     - Logic di chuyển thông minh (intelligent movement)
+    - BFS utilities cho strategic planning (FLOOD FILL & ESCAPE ANALYSIS)
     """
     
     def __init__(self, game_instance):
@@ -20,6 +21,17 @@ class PacmanAI:
             game_instance: Instance của PacmanGame để truy cập maze, ghosts, etc.
         """
         self.game = game_instance
+        
+        # Initialize BFS utilities for strategic planning
+        try:
+            from bfs_utilities import BFSUtilities
+            self.bfs_utils = BFSUtilities(game_instance)
+            self.bfs_enabled = True
+            print("✅ BFS Utilities initialized - Enhanced strategic planning enabled")
+        except ImportError as e:
+            print(f"⚠️  BFS Utilities not available: {e}")
+            self.bfs_utils = None
+            self.bfs_enabled = False
         
         # Ghost avoidance variables
         self.escape_mode = False  # Đang trong chế độ thoát hiểm
@@ -170,14 +182,32 @@ class PacmanAI:
             recent_directions = self.escape_direction_history[-5:]  # Check last 5 instead of 6
             unique_directions = len(set(map(tuple, recent_directions)))
             
+            # IMPROVED: Detect oscillation between 2 opposite directions (ping-pong)
             if unique_directions <= 2:  # Only 1-2 unique directions = LOOP
-                print(f"🔄 ESCAPE LOOP DETECTED! Unique dirs: {unique_directions}")
-                self.escape_direction_history.clear()
-                self.escape_timeout_count += 1
-                self.stuck_prevention_timer = current_time
-                # MUCH longer cooldown to break the loop effectively
-                adaptive_cooldown = 400 + (self.escape_timeout_count * 100)  # Increased from 150+75 to 400+100
-                print(f"🚫 Extended cooldown: {adaptive_cooldown}ms, timeout count: {self.escape_timeout_count}")
+                # Check if it's a ping-pong pattern (back and forth)
+                is_ping_pong = False
+                if unique_directions == 2 and len(recent_directions) >= 4:
+                    # Check if alternating between opposite directions
+                    dir1, dir2 = list(set(map(tuple, recent_directions)))
+                    if (dir1[0] == -dir2[0] and dir1[1] == -dir2[1]):  # Opposite directions
+                        is_ping_pong = True
+                        print(f"🔄 PING-PONG DETECTED! Alternating between {dir1} ↔ {dir2}")
+                
+                if is_ping_pong:
+                    # AGGRESSIVE ACTION: Force a perpendicular turn to break the loop
+                    print(f"🚨 BREAKING PING-PONG LOOP - forcing perpendicular turn!")
+                    self.escape_direction_history.clear()
+                    self.escape_timeout_count += 1
+                    # Shorter cooldown but force different direction
+                    adaptive_cooldown = 100  # Short cooldown for forced turn
+                else:
+                    print(f"🔄 ESCAPE LOOP DETECTED! Unique dirs: {unique_directions}")
+                    self.escape_direction_history.clear()
+                    self.escape_timeout_count += 1
+                    self.stuck_prevention_timer = current_time
+                    # MUCH longer cooldown to break the loop effectively
+                    adaptive_cooldown = 400 + (self.escape_timeout_count * 100)  # Increased from 150+75 to 400+100
+                    print(f"🚫 Extended cooldown: {adaptive_cooldown}ms, timeout count: {self.escape_timeout_count}")
             else:
                 # Normal adaptive cooldown - increased base values
                 base_cooldown = 80 if self.consecutive_turns <= 1 else 120  # Increased from 30/60 to 80/120
@@ -331,8 +361,18 @@ class PacmanAI:
         
         # ANTI-LOOP: Tránh các hướng đã dùng gần đây nếu có thể
         recently_used_directions = set()
+        opposite_direction_pairs = set()
         if hasattr(self, 'escape_direction_history') and len(self.escape_direction_history) > 3:
             recently_used_directions = set(map(tuple, self.escape_direction_history[-4:]))
+            
+            # IMPROVED: Detect opposite direction pairs (ping-pong)
+            if len(self.escape_direction_history) >= 2:
+                last_dir = tuple(self.escape_direction_history[-1])
+                prev_dir = tuple(self.escape_direction_history[-2])
+                # If last 2 moves are opposite, mark both as ping-pong
+                if last_dir[0] == -prev_dir[0] and last_dir[1] == -prev_dir[1]:
+                    opposite_direction_pairs.add(last_dir)
+                    opposite_direction_pairs.add(prev_dir)
         
         for dx, dy in directions:
             new_col, new_row = pacman_col + dx, pacman_row + dy
@@ -346,9 +386,13 @@ class PacmanAI:
                 pacman_row, pacman_col, (dx, dy)
             )
             
+            # ANTI-PING-PONG: Heavy penalty for opposite directions
+            if (dx, dy) in opposite_direction_pairs:
+                safety_score -= 50  # Heavy penalty to avoid ping-pong
+                print(f"🚫 PING-PONG direction [{dx}, {dy}] gets heavy penalty, score: {safety_score}")
             # ANTI-LOOP BONUS: Prefer directions not used recently
-            if (dx, dy) not in recently_used_directions:
-                safety_score += 20  # Bonus for fresh directions
+            elif (dx, dy) not in recently_used_directions:
+                safety_score += 25  # Increased bonus for fresh directions
                 print(f"🆕 Fresh direction [{dx}, {dy}] gets bonus, score: {safety_score}")
             elif len(recently_used_directions) > 0:
                 safety_score -= 15  # Penalty for repeated directions
@@ -360,8 +404,25 @@ class PacmanAI:
             # Sắp xếp theo safety score
             escape_options.sort(key=lambda x: x[2], reverse=True)
             
+            # IMPROVED: Prioritize perpendicular directions when in ping-pong loop
+            current_dir = self.game.pacman_direction
+            if hasattr(self, 'escape_timeout_count') and self.escape_timeout_count > 2:
+                # Force perpendicular turn to break loop
+                perpendicular_options = [
+                    opt for opt in escape_options 
+                    if (opt[0] != current_dir[0] and opt[0] != -current_dir[0]) or
+                       (opt[1] != current_dir[1] and opt[1] != -current_dir[1])
+                ]
+                if perpendicular_options:
+                    # Choose best perpendicular option
+                    perpendicular_options.sort(key=lambda x: x[2], reverse=True)
+                    dx, dy, score = perpendicular_options[0]
+                    print(f"🔄 FORCED PERPENDICULAR turn to break loop: [{dx}, {dy}] (score: {score})")
+                    self.escape_timeout_count = 0  # Reset counter after forced turn
+                else:
+                    dx, dy, score = escape_options[0]
             # ENHANCED SELECTION: If top 2-3 options are close in score, randomize to avoid predictability
-            if len(escape_options) > 1:
+            elif len(escape_options) > 1:
                 top_score = escape_options[0][2]
                 good_options = [opt for opt in escape_options if opt[2] >= top_score - 8]
                 if len(good_options) > 1:
@@ -382,7 +443,7 @@ class PacmanAI:
             # ENHANCED escape mode với adaptive duration
             self.escape_mode = True
             self.escape_steps = 0
-            self.min_escape_distance = min(4, len(danger_analysis) + 1)  # Adaptive based on ghost count
+            self.min_escape_distance = min(6, len(danger_analysis) + 2)  # Increased escape distance
             
             return True
         
@@ -1754,3 +1815,251 @@ class PacmanAI:
         
         print(f"❌ FORCED MOVEMENT FAILED: No safe moves available")
         return False
+    
+    # ============================================================================
+    # BFS UTILITIES INTEGRATION - STRATEGIC PLANNING
+    # ============================================================================
+    
+    def check_movement_freedom(self, debug=False):
+        """
+        FLOOD FILL: Kiểm tra "tự do di chuyển" của Pacman
+        
+        Use case:
+        - Detect trapped situations sớm
+        - Quyết định aggressive vs defensive strategy
+        - Warning về nguy cơ bị kẹt
+        
+        Returns:
+            dict hoặc None nếu BFS không available
+        """
+        if not self.bfs_enabled or not self.bfs_utils:
+            return None
+        
+        pacman_pos = (int(self.game.pacman_pos[1]), int(self.game.pacman_pos[0]))
+        
+        # Get ghost positions (không bao gồm scared ghosts)
+        ghost_positions = [
+            (int(g['pos'][1]), int(g['pos'][0])) 
+            for g in self.game.ghosts 
+            if not g.get('scared', False) and not self.game.can_pacman_pass_through_ghost(g)
+        ]
+        
+        # Get bomb positions
+        bomb_positions = self.game.get_bomb_grid_positions() if hasattr(self.game, 'get_bomb_grid_positions') else []
+        
+        # Calculate movement freedom
+        freedom_analysis = self.bfs_utils.calculate_movement_freedom(
+            pacman_pos, ghost_positions, bomb_positions, radius=10
+        )
+        
+        if debug or freedom_analysis['is_trapped']:
+            print(f"\n{'='*60}")
+            print(f"🔍 BFS MOVEMENT FREEDOM ANALYSIS")
+            print(f"{'='*60}")
+            print(f"📊 Total Reachable: {freedom_analysis['total_reachable']} cells")
+            print(f"✅ Safe Positions: {freedom_analysis['safe_positions']} cells")
+            print(f"⚠️  Moderate Danger: {freedom_analysis['moderate_danger']} cells")
+            print(f"❌ Danger Positions: {freedom_analysis['danger_positions']} cells")
+            print(f"📈 Freedom: {freedom_analysis['freedom_percentage']:.1f}%")
+            print(f"🎯 Threat Level: {freedom_analysis['threat_level']}")
+            print(f"🚨 Is Trapped: {'YES ⚠️' if freedom_analysis['is_trapped'] else 'NO ✅'}")
+            print(f"{'='*60}\n")
+        
+        return freedom_analysis
+    
+    def find_bfs_escape_route(self, debug=False):
+        """
+        ESCAPE ROUTE ANALYSIS: Tìm lối thoát tối ưu sử dụng BFS
+        
+        Use case:
+        - Emergency escape khi bị ma/bom bao vây
+        - Tìm route AN TOÀN hơn là route NGẮN NHẤT
+        - Backup plan khi A*/Dijkstra route bị block
+        
+        Returns:
+            dict với escape route hoặc None
+        """
+        if not self.bfs_enabled or not self.bfs_utils:
+            return None
+        
+        pacman_pos = (int(self.game.pacman_pos[1]), int(self.game.pacman_pos[0]))
+        
+        # Get threat positions
+        ghost_positions = [
+            (int(g['pos'][1]), int(g['pos'][0])) 
+            for g in self.game.ghosts 
+            if not g.get('scared', False) and not self.game.can_pacman_pass_through_ghost(g)
+        ]
+        
+        bomb_positions = self.game.get_bomb_grid_positions() if hasattr(self.game, 'get_bomb_grid_positions') else []
+        
+        # Find all escape routes
+        escape_routes = self.bfs_utils.find_all_escape_routes(
+            pacman_pos, ghost_positions, bomb_positions,
+            min_safe_distance=8, max_search_depth=15, max_routes=5
+        )
+        
+        if escape_routes:
+            best_route = escape_routes[0]
+            
+            if debug:
+                print(f"\n{'='*60}")
+                print(f"🚀 BFS ESCAPE ROUTE ANALYSIS")
+                print(f"{'='*60}")
+                print(f"📍 From: {pacman_pos}")
+                print(f"🎯 To: {best_route['destination']}")
+                print(f"📏 Distance: {best_route['distance']} steps")
+                print(f"🛡️  Safety Score: {best_route['safety_score']:.1f}")
+                print(f"👻 Min Ghost Distance: {best_route['min_ghost_distance']}")
+                print(f"💣 Min Bomb Distance: {best_route['min_bomb_distance']}")
+                print(f"🔀 Is Junction: {'YES' if best_route['is_junction'] else 'NO'}")
+                print(f"🧭 Escape Directions: {', '.join(best_route['escape_directions'])}")
+                print(f"📋 Found {len(escape_routes)} escape routes total")
+                print(f"{'='*60}\n")
+            
+            return best_route
+        
+        if debug:
+            print(f"⚠️  BFS: No escape routes found!")
+        
+        return None
+    
+    def apply_bfs_escape_strategy(self):
+        """
+        Áp dụng BFS escape strategy - ENHANCED alternative to rule-based escape
+        
+        Use case:
+        - Thay thế emergency_ghost_avoidance khi cần escape phức tạp
+        - Tìm route an toàn thay vì chỉ quay đầu
+        
+        Returns:
+            bool - True nếu đã apply escape strategy
+        """
+        if not self.bfs_enabled or not self.bfs_utils:
+            return False
+        
+        # Check movement freedom first
+        freedom_analysis = self.check_movement_freedom(debug=False)
+        
+        if not freedom_analysis:
+            return False
+        
+        # Nếu bị trapped hoặc freedom thấp, tìm escape route
+        if freedom_analysis['is_trapped'] or freedom_analysis['freedom_percentage'] < 30:
+            print(f"🚨 BFS ESCAPE TRIGGERED: Freedom={freedom_analysis['freedom_percentage']:.1f}%")
+            
+            # Find best escape direction
+            pacman_pos = (int(self.game.pacman_pos[1]), int(self.game.pacman_pos[0]))
+            ghost_positions = [
+                (int(g['pos'][1]), int(g['pos'][0])) 
+                for g in self.game.ghosts 
+                if not g.get('scared', False)
+            ]
+            bomb_positions = self.game.get_bomb_grid_positions() if hasattr(self.game, 'get_bomb_grid_positions') else []
+            
+            escape_decision = self.bfs_utils.find_best_escape_direction(
+                pacman_pos, ghost_positions, bomb_positions
+            )
+            
+            if escape_decision:
+                direction = escape_decision['direction']
+                print(f"✅ BFS Escape: Direction={direction}, Safety={escape_decision['safety_score']:.1f}")
+                
+                self.game.pacman_next_direction = direction
+                
+                # Activate escape mode
+                self.escape_mode = True
+                self.escape_steps = 0
+                self.min_escape_distance = 6
+                
+                return True
+        
+        return False
+    
+    def find_safe_waiting_zone(self):
+        """
+        Tìm vị trí an toàn để "chờ" ma đi qua
+        
+        Use case:
+        - Khi không thể đến goal (bị ma chặn)
+        - Defensive strategy
+        - Tránh engagement không cần thiết
+        
+        Returns:
+            dict với waiting position hoặc None
+        """
+        if not self.bfs_enabled or not self.bfs_utils:
+            return None
+        
+        pacman_pos = (int(self.game.pacman_pos[1]), int(self.game.pacman_pos[0]))
+        
+        ghost_positions = [
+            (int(g['pos'][1]), int(g['pos'][0])) 
+            for g in self.game.ghosts 
+            if not g.get('scared', False)
+        ]
+        
+        bomb_positions = self.game.get_bomb_grid_positions() if hasattr(self.game, 'get_bomb_grid_positions') else []
+        
+        waiting_pos = self.bfs_utils.find_safe_waiting_position(
+            pacman_pos, ghost_positions, bomb_positions, wait_radius=6
+        )
+        
+        if waiting_pos:
+            print(f"⏸️  BFS Safe Waiting Zone: {waiting_pos['position']}, Safety={waiting_pos['safety_score']:.1f}")
+        
+        return waiting_pos
+    
+    def enhanced_check_bomb_threat_with_bfs(self, target_position=None):
+        """
+        ENHANCED bomb threat check sử dụng BFS FLOOD FILL
+        Chính xác hơn vì check TẤT CẢ paths, không chỉ shortest
+        
+        Returns:
+            dict với threat analysis
+        """
+        if not self.bfs_enabled or not self.bfs_utils:
+            # Fallback to original method
+            return self.check_bomb_threat_level(target_position)
+        
+        pacman_pos = (int(self.game.pacman_pos[1]), int(self.game.pacman_pos[0]))
+        
+        if target_position is None:
+            target_position = getattr(self.game, 'current_goal', None)
+        
+        if not target_position:
+            return {'threat_level': 'NO_TARGET', 'is_blocked': False}
+        
+        bomb_positions = self.game.get_bomb_grid_positions() if hasattr(self.game, 'get_bomb_grid_positions') else []
+        
+        if not bomb_positions:
+            return {'threat_level': 'SAFE', 'is_blocked': False}
+        
+        # Use BFS to check complete blockage
+        blockage_info = self.bfs_utils.check_area_blocked_by_bombs(
+            pacman_pos, target_position, bomb_positions
+        )
+        
+        if blockage_info['is_blocked']:
+            print(f"🆘 BFS CONFIRMS: Complete bomb blockage! No path exists!")
+            return {
+                'threat_level': 'COMPLETE_BLOCKAGE',
+                'is_blocked': True,
+                'alternatives': 0,
+                'reachable_cells': blockage_info['reachable_from_start'],
+                'warning': f'🆘 BFS: {blockage_info["blocking_bombs"]} bombs completely block path!'
+            }
+        
+        return {
+            'threat_level': 'SAFE',
+            'is_blocked': False,
+            'alternatives': 3,
+            'warning': '✅ BFS: Path to goal is clear'
+        }
+    
+    def get_bfs_statistics(self):
+        """Lấy statistics từ BFS utilities"""
+        if not self.bfs_enabled or not self.bfs_utils:
+            return None
+        
+        return self.bfs_utils.get_statistics()
