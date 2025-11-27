@@ -6,15 +6,17 @@ import signal
 from maze_generator import MazeGenerator
 from dijkstra_algorithm import DijkstraAlgorithm
 from pacman_ai import PacmanAI
+from ghost_avoidance_visualizer import GhostAvoidanceVisualizer
 import config
 
 class PacmanGame:
-    def __init__(self, width=57, height=32, cell_size=30):
+    def __init__(self, width=50, height=28, cell_size=30):
         self.maze_gen = MazeGenerator(width, height, complexity=1)  # Độ phức tạp mê cung
         self.dijkstra = DijkstraAlgorithm(self.maze_gen)
         self.cell_size = cell_size
-        self.screen_width = width * cell_size
-        self.screen_height = (height + 3) * cell_size  # Extra space for UI
+        # Add extra width for right panel (350px)
+        self.screen_width = width * cell_size + 380
+        self.screen_height = (height + 3) * cell_size  # Normal UI space
 
         pygame.init()
         pygame.mixer.init()  # Initialize audio mixer
@@ -99,9 +101,9 @@ class PacmanGame:
         self.power_pellets = []
         self.place_dots_and_pellets()
 
-        # Bombs as obstacles
+        # Bombs as obstacles - get from maze generator (already validated)
         self.bombs = []
-        self.place_bombs()
+        self.load_bombs_from_maze_generator()
 
         # Ghosts
         self.ghosts = []
@@ -109,6 +111,17 @@ class PacmanGame:
 
         # Initialize Pacman AI
         self.pacman_ai = PacmanAI(self)
+        
+        # Initialize Ghost Avoidance Visualizer
+        try:
+            self.visualizer = GhostAvoidanceVisualizer(self)
+            print("✅ Ghost Avoidance Visualizer loaded successfully")
+            print("   Press 'V' to toggle visualization")
+            print("   Press 'B' to toggle debug info")
+            print("   Press 'SHIFT+S' to save analysis report")
+        except Exception as e:
+            print(f"⚠️  Could not load visualizer: {e}")
+            self.visualizer = None
 
         # Auto mode for Pacman AI - ENSURE STARTS AS FALSE
         self.auto_mode = False
@@ -294,8 +307,42 @@ class PacmanGame:
         # Save initial dots count for statistics
         self.initial_dots = self.dots.copy()
 
-    def place_bombs(self):
-        """Place random bombs as obstacles on the maze - with strict path validation"""
+    def load_bombs_from_maze_generator(self):
+        """Load bomb positions from maze generator - bombs are pre-validated during maze generation"""
+        self.bombs = []
+        
+        if not hasattr(self.maze_gen, 'bomb_positions') or not self.maze_gen.bomb_positions:
+            print("⚠️  No bomb positions from maze generator")
+            return
+        
+        print(f"\n📦 Loading {len(self.maze_gen.bomb_positions)} bombs from MazeGenerator")
+        
+        for row, col in self.maze_gen.bomb_positions:
+            # Verify position is valid
+            if not (0 <= row < self.maze_gen.height and 0 <= col < self.maze_gen.width):
+                print(f"❌ Bomb at Grid({row}, {col}) out of bounds - SKIPPED")
+                continue
+            
+            maze_value = self.maze[row, col]
+            if maze_value != 0:
+                print(f"❌ Bomb at Grid({row}, {col}) not on path (maze={maze_value}) - SKIPPED")
+                continue
+            
+            # Convert grid to pixel coordinates (center of cell)
+            center_x = (col + 0.5) * self.cell_size
+            center_y = (row + 0.5) * self.cell_size
+            
+            self.bombs.append((center_x, center_y))
+            print(f"✅ Loaded bomb at Grid({row}, {col}) -> Pixel({center_x:.1f}, {center_y:.1f})")
+        
+        print(f"✅ Successfully loaded {len(self.bombs)} bombs\n")
+
+    def place_bombs_OLD_DEPRECATED(self):
+        """
+        OLD METHOD - DEPRECATED
+        This method is kept for reference but should NOT be used.
+        Use load_bombs_from_maze_generator() instead.
+        """
         self.bombs = []
         
         # Collect all valid positions (ONLY open paths) with ULTRA STRICT validation
@@ -324,11 +371,14 @@ class PacmanGame:
                 start_dist = math.sqrt((x - self.start[1])**2 + (y - self.start[0])**2)
                 goal_dist = math.sqrt((x - self.goal[1])**2 + (y - self.goal[0])**2)
                 
-                # Must be at least 4 cells away from start/goal
-                if start_dist <= 4 or goal_dist <= 4:
+                # Must be at least 5 cells away from start/goal (increased from 4)
+                if start_dist <= 5 or goal_dist <= 5:
                     continue
                 
-                # Check 6: Ensure position is not adjacent to walls on all sides (avoid dead ends)
+                # Check 6: Removed - too restrictive
+                # The surrounding_walls check below is sufficient
+                
+                # Check 7: Ensure position is not adjacent to walls on all sides (avoid dead ends)
                 surrounding_walls = 0
                 for dy in [-1, 0, 1]:
                     for dx in [-1, 0, 1]:
@@ -406,8 +456,9 @@ class PacmanGame:
         
         for i, bomb in enumerate(self.bombs):
             # Convert bomb pixel coordinate to grid position
-            grid_col = int(bomb[0] // self.cell_size)  # x -> col
-            grid_row = int(bomb[1] // self.cell_size)  # y -> row
+            # Use round() for accurate conversion from center position
+            grid_col = round(bomb[0] / self.cell_size - 0.5)  # x -> col
+            grid_row = round(bomb[1] / self.cell_size - 0.5)  # y -> row
             
             # Check bounds
             if not (0 <= grid_row < self.maze_gen.height and 0 <= grid_col < self.maze_gen.width):
@@ -430,78 +481,139 @@ class PacmanGame:
         print("=" * 45 + "\n")
 
     def place_bombs_with_pathfinding_check(self, valid_positions, max_bombs=5):
-        """Place bombs while ensuring path to goal remains available with ULTRA STRICT validation"""
+        """Place bombs while ensuring path to goal ALWAYS remains available - ENHANCED"""
         selected_bombs = []
         remaining_positions = valid_positions.copy()
-        random.shuffle(remaining_positions)  # Randomize for variety
+        random.shuffle(remaining_positions)
         
-        # Kiểm tra đường đi ban đầu
+        # Kiểm tra đường đi ban đầu MULTIPLE TIMES để đảm bảo
         initial_path, initial_distance = self.dijkstra.shortest_path(self.start, self.goal)
         if not initial_path:
-            print("❌ Không có đường đi ban đầu từ start đến goal!")
+            print("❌ CRITICAL: Không có đường đi ban đầu từ start đến goal!")
             return []
         
         print(f"📍 Đường đi ban đầu: {initial_distance} bước")
         
-        for bomb_pos in remaining_positions:
-            if len(selected_bombs) >= max_bombs:
-                break
-                
-            row, col = bomb_pos  # bomb_pos is (row, col)
+        # Track failed positions to avoid retrying
+        failed_positions = set()
+        attempts = 0
+        max_attempts = len(remaining_positions)
+        
+        while len(selected_bombs) < max_bombs and attempts < max_attempts:
+            attempts += 1
             
-            # ===== ULTRA STRICT PRE-VALIDATION =====
-            # Check 1: Verify bounds
-            if not (0 <= row < self.maze_gen.height and 0 <= col < self.maze_gen.width):
-                print(f"❌ Vị trí bom vượt biên giới Grid({row}, {col}) - BỎ QUA")
-                continue
-            
-            # Check 2: Get maze value ONCE
-            maze_value = self.maze[row, col]
-            
-            # Check 3: MUST be exactly 0 (path)
-            if maze_value != 0:
-                print(f"❌ Grid({row}, {col}) không phải đường đi (giá trị: {maze_value}) - BỎ QUA")
-                continue
-            
-            # Check 4: Explicitly reject walls
-            if maze_value == 1:
-                print(f"❌ Grid({row}, {col}) là TƯỜNG - BỎ QUA")
-                continue
-            
-            # Check 5: Verify minimum distance from already placed bombs
-            too_close = False
-            for selected_row, selected_col in selected_bombs:
-                distance = math.sqrt((col - selected_col)**2 + (row - selected_row)**2)
-                if distance < 4:  # Minimum 4 cells between bombs
-                    too_close = True
+            # Find next candidate that hasn't failed
+            bomb_pos = None
+            for pos in remaining_positions:
+                if pos not in failed_positions:
+                    bomb_pos = pos
+                    remaining_positions.remove(pos)
                     break
             
-            if too_close:
+            if bomb_pos is None:
+                break  # No more candidates
+                
+            row, col = bomb_pos
+            
+            # ===== ULTRA STRICT PRE-VALIDATION =====
+            # Verify bounds
+            if not (0 <= row < self.maze_gen.height and 0 <= col < self.maze_gen.width):
+                failed_positions.add(bomb_pos)
                 continue
             
-            # Check 6: Test pathfinding with this bomb temporarily added
-            temp_bombs = selected_bombs + [(row, col)]
-            temp_bomb_grid = set(temp_bombs)  # Already in (row, col) format
+            # MUST be path (0)
+            maze_value = self.maze[row, col]
+            if maze_value != 0:
+                failed_positions.add(bomb_pos)
+                continue
             
-            # Verify path still exists
+            # Removed: is_at_least_distance_from_wall check - too restrictive
+            # The surrounding_walls check in place_bombs() is sufficient
+            
+            # Check distance from goal (must be at least 5 cells away)
+            goal_dist = math.sqrt((col - self.goal[1])**2 + (row - self.goal[0])**2)
+            if goal_dist <= 5:
+                failed_positions.add(bomb_pos)
+                continue
+            
+            # Check distance from other bombs
+            too_close = any(
+                math.sqrt((col - sc)**2 + (row - sr)**2) < 5  # Increased from 4 to 5
+                for sr, sc in selected_bombs
+            )
+            if too_close:
+                failed_positions.add(bomb_pos)
+                continue
+            
+            # Check not on critical path (main path between start and goal)
+            if initial_path and (row, col) in initial_path[:max(3, len(initial_path)//3)]:
+                # Skip if on first third of path - too critical
+                failed_positions.add(bomb_pos)
+                continue
+            
+            # ===== CRITICAL: Test MULTIPLE alternative paths =====
+            temp_bombs = selected_bombs + [(row, col)]
+            temp_bomb_grid = set(temp_bombs)
+            
+            # Test primary path
             path, distance = self.dijkstra.shortest_path_with_obstacles(
                 self.start, self.goal, temp_bomb_grid
             )
             
-            # Check 7: Path must exist and not be too long
-            if path and distance <= initial_distance * 2:
-                # ===== FINAL PRE-PLACEMENT VERIFICATION =====
-                final_check = self.maze[row, col]
-                if final_check == 0:  # Must be path (0)
-                    selected_bombs.append((row, col))
-                    print(f"✅ Đặt bom #{len(selected_bombs)} tại Grid({row}, {col}) - Đường đi còn {distance} bước - Maze[{row},{col}]={final_check}")
-                else:
-                    print(f"❌ Final check thất bại: Grid({row}, {col}) không phải đường đi (giá trị: {final_check})")
+            # ENHANCED CHECK: Path must exist, not be too long, AND have alternatives
+            if not path:
+                failed_positions.add(bomb_pos)
+                continue
+            
+            if distance > initial_distance * 1.5:  # Stricter limit (was 2.0)
+                failed_positions.add(bomb_pos)
+                continue
+            
+            # ===== NEW: Verify alternative paths exist =====
+            # Check that removing one bomb still leaves path
+            alternative_exists = False
+            if len(temp_bombs) > 1:
+                # Try removing each bomb and see if path still works
+                for test_idx in range(len(temp_bombs)):
+                    test_bombs = temp_bombs[:test_idx] + temp_bombs[test_idx+1:]
+                    test_path, _ = self.dijkstra.shortest_path_with_obstacles(
+                        self.start, self.goal, set(test_bombs)
+                    )
+                    if test_path:
+                        alternative_exists = True
+                        break
             else:
-                if not path:
-                    print(f"⚠️  Bỏ qua Grid({row}, {col}) - sẽ CHẶN đường đi hoàn toàn")
-                else:
-                    print(f"⚠️  Bỏ qua Grid({row}, {col}) - làm đường đi quá dài ({distance} > {initial_distance * 2})")
+                alternative_exists = True  # First bomb always ok
+            
+            if not alternative_exists and len(temp_bombs) > 1:
+                failed_positions.add(bomb_pos)
+                continue
+            
+            # ===== FINAL VERIFICATION =====
+            if self.maze[row, col] == 0:
+                selected_bombs.append((row, col))
+                print(f"✅ Đặt bom #{len(selected_bombs)} tại Grid({row}, {col}) - Path: {distance} bước (limit: {int(initial_distance * 1.5)})")
+                
+                # Double-check path still exists after adding
+                verify_path, _ = self.dijkstra.shortest_path_with_obstacles(
+                    self.start, self.goal, set(selected_bombs)
+                )
+                if not verify_path:
+                    print(f"❌ ROLLBACK: Bom tại Grid({row}, {col}) chặn đường!")
+                    selected_bombs.remove((row, col))
+                    failed_positions.add(bomb_pos)
+            else:
+                failed_positions.add(bomb_pos)
+        
+        # FINAL GLOBAL CHECK
+        if selected_bombs:
+            final_path, final_dist = self.dijkstra.shortest_path_with_obstacles(
+                self.start, self.goal, set(selected_bombs)
+            )
+            if not final_path:
+                print("❌ CRITICAL: Final check failed - clearing all bombs!")
+                return []
+            print(f"✅ Final verification: Path exists ({final_dist} bước)")
         
         return selected_bombs
 
@@ -666,6 +778,52 @@ class PacmanGame:
         
         # Fallback: use Pacman's start position if nothing found
         return self.start
+
+    def find_far_spawn_position(self, pacman_row, pacman_col, min_distance=15, max_attempts=50):
+        """Find a random valid spawn position far from Pacman"""
+        import random
+        
+        valid_positions = []
+        
+        # Collect all valid positions that are far enough from Pacman
+        for row in range(self.maze_gen.height):
+            for col in range(self.maze_gen.width):
+                # Must be a valid path
+                if self.maze[row, col] != 0:
+                    continue
+                
+                # Calculate distance from Pacman
+                distance = math.sqrt((col - pacman_col)**2 + (row - pacman_row)**2)
+                
+                # Must be at least min_distance away
+                if distance >= min_distance:
+                    valid_positions.append((row, col))
+        
+        # If we found valid far positions, choose one randomly
+        if valid_positions:
+            return random.choice(valid_positions)
+        
+        # Fallback 1: Try with reduced distance
+        for reduced_dist in [min_distance * 0.75, min_distance * 0.5, min_distance * 0.25]:
+            valid_positions = []
+            for row in range(self.maze_gen.height):
+                for col in range(self.maze_gen.width):
+                    if self.maze[row, col] != 0:
+                        continue
+                    distance = math.sqrt((col - pacman_col)**2 + (row - pacman_row)**2)
+                    if distance >= reduced_dist:
+                        valid_positions.append((row, col))
+            if valid_positions:
+                return random.choice(valid_positions)
+        
+        # Fallback 2: Return any valid position
+        for row in range(self.maze_gen.height):
+            for col in range(self.maze_gen.width):
+                if self.maze[row, col] == 0:
+                    return (row, col)
+        
+        # Final fallback: center of maze
+        return (self.maze_gen.height // 2, self.maze_gen.width // 2)
 
     def draw_maze(self):
         """Draw the maze with Pacman-style walls"""
@@ -922,21 +1080,17 @@ class PacmanGame:
                 path_steps = len(self.shortest_path) - 1 if self.shortest_path else 0
                 path_info = f" | Path: {path_steps} steps"
             
-            inst_text = self.font.render(f"{mode_text} | {ghost_info}{path_info} | A: Auto | H: Hint | F: FPS | D: Speed | P: Pause | R: Restart", True, self.YELLOW)
+            vis_status = " | V:Visual" if self.visualizer and self.visualizer.enabled else ""
+            
+            inst_text = self.font.render(f"{mode_text} | {ghost_info}{path_info} | V: Visual | B: Debug | A: Auto | H: Hint | R: Restart", True, self.YELLOW)
             self.screen.blit(inst_text, (10, ui_y + 30))
 
         elif self.game_state == "paused":
             pause_text = self.large_font.render("PAUSED", True, self.YELLOW)
             self.screen.blit(pause_text, (self.screen_width // 2 - 60, self.screen_height // 2))
 
-        elif self.game_state == "game_over":
-            self.draw_game_over_notification()
-
-        elif self.game_state == "level_complete":
-            self.draw_win_notification()
-
     def draw_fps_info(self):
-        """Draw FPS and performance information in top-right corner"""
+        """Draw FPS and performance information on right side (top position)"""
         if not self.fps_history:
             return
             
@@ -946,10 +1100,11 @@ class PacmanGame:
         min_fps = min(self.fps_history)
         max_fps = max(self.fps_history)
         
-        # Draw performance info background
-        info_width = 200
-        info_height = 160  # Increased for collision info
-        info_x = self.screen_width - info_width - 10
+        # Draw performance info background on right side (top position)
+        maze_width = self.maze_gen.width * self.cell_size
+        info_width = 240
+        info_height = 120
+        info_x = maze_width + 5
         info_y = 10
         
         # Semi-transparent background
@@ -982,12 +1137,12 @@ class PacmanGame:
         self.screen.blit(target_text, (info_x + 110, y_offset))
         
         # Average FPS
-        y_offset += 20
+        y_offset += 16
         avg_text = small_font.render(f"Avg: {avg_fps:.1f}", True, self.WHITE)
         self.screen.blit(avg_text, (info_x + 10, y_offset))
         
         # Min/Max FPS
-        y_offset += 20
+        y_offset += 16
         min_text = small_font.render(f"Min: {min_fps:.1f}", True, self.WHITE)
         self.screen.blit(min_text, (info_x + 10, y_offset))
         
@@ -995,24 +1150,24 @@ class PacmanGame:
         self.screen.blit(max_text, (info_x + 110, y_offset))
         
         # Delta time
-        y_offset += 20
+        y_offset += 16
         delta_text = small_font.render(f"Delta: {self.delta_time*1000:.1f}ms", True, self.WHITE)
         self.screen.blit(delta_text, (info_x + 10, y_offset))
         
         # Movement speeds
-        y_offset += 20
+        y_offset += 16
         dynamic_status = "ON" if config.ENABLE_DYNAMIC_SPEED else "OFF"
         speed_text = small_font.render(f"Speed: P{config.PACMAN_SPEED} G{config.GHOST_SPEED}", True, self.YELLOW)
         self.screen.blit(speed_text, (info_x + 10, y_offset))
         
         # Dynamic speed status
-        y_offset += 15
+        y_offset += 12
         dynamic_color = (0, 255, 0) if config.ENABLE_DYNAMIC_SPEED else self.RED
         dynamic_text = small_font.render(f"Dynamic: {dynamic_status}", True, dynamic_color)
         self.screen.blit(dynamic_text, (info_x + 10, y_offset))
         
         # Collision performance
-        y_offset += 15
+        y_offset += 12
         collision_color = (0, 255, 0) if self.collision_checks_per_frame < 50 else self.ORANGE if self.collision_checks_per_frame < 200 else self.RED
         collision_text = small_font.render(f"Checks: {self.collision_checks_per_frame}", True, collision_color)
         self.screen.blit(collision_text, (info_x + 10, y_offset))
@@ -1417,13 +1572,17 @@ class PacmanGame:
 
     def move_eaten_ghost_to_spawn(self, ghost):
         """Move eaten ghost (eyes only) back to spawn point using pathfinding"""
-        # Spawn point is near the center of the maze
-        spawn_row = self.maze_gen.height // 2
-        spawn_col = self.maze_gen.width // 2
+        # Get Pacman's current position
+        pacman_row = int(round(self.pacman_pos[1]))
+        pacman_col = int(round(self.pacman_pos[0]))
         
-        # Find a valid spawn position near center
-        spawn_pos = self.find_valid_ghost_start_position(spawn_row, spawn_col)
+        # Find a random spawn position far from Pacman (minimum 15 cells away)
+        spawn_pos = self.find_far_spawn_position(pacman_row, pacman_col, min_distance=15)
         target_pos = (spawn_pos[0], spawn_pos[1])  # (row, col)
+        
+        # Calculate actual distance for logging
+        distance = math.sqrt((spawn_pos[1] - pacman_col)**2 + (spawn_pos[0] - pacman_row)**2)
+        print(f"👻 {ghost.get('name', 'Ghost')} eyes: spawn target at Grid({spawn_pos[0]}, {spawn_pos[1]}) - {distance:.1f} cells from Pacman")
         
         current_col = int(round(ghost['pos'][0]))
         current_row = int(round(ghost['pos'][1]))
@@ -1531,7 +1690,7 @@ class PacmanGame:
                         del ghost['return_path']
                     if 'path_index' in ghost:
                         del ghost['path_index']
-                    # print(f"{ghost['name']} ghost has respawned!")
+                    print(f"✅ {ghost.get('name', 'Ghost')} respawned at Grid({final_target[0]}, {final_target[1]})!")
             else:
                 # Reached end of path
                 final_target = path[-1]
@@ -1542,7 +1701,7 @@ class PacmanGame:
                     del ghost['return_path']
                 if 'path_index' in ghost:
                     del ghost['path_index']
-                # print(f"{ghost['name']} ghost has respawned!")
+                print(f"✅ {ghost.get('name', 'Ghost')} respawned at Grid({final_target[0]}, {final_target[1]})!")
 
     def get_smart_direction(self, ghost, valid_directions, current_pos, is_stuck):
         """Smart direction selection that reduces oscillation and improves flow"""
@@ -2573,16 +2732,31 @@ class PacmanGame:
             # Giảm thời gian escape để Pacman không bị kẹt lâu
             max_escape_steps = getattr(self.pacman_ai, 'min_escape_distance', 3)  # Mặc định 3 bước
             
-            # Kiểm tra xem đã đi đủ xa chưa hoặc quá lâu
-            if self.pacman_ai.escape_steps >= max_escape_steps:
+            # CHECK COMMIT TIME - Phải commit đủ lâu trước khi có thể thoát escape
+            escape_commit_time = getattr(self.pacman_ai, 'escape_commit_time', 0)
+            min_escape_duration = getattr(self.pacman_ai, 'min_escape_duration', 800)
+            time_in_escape = current_time - escape_commit_time
+            
+            # Kiểm tra xem đã đi đủ xa chưa hoặc quá lâu VÀ đã commit đủ thời gian
+            if self.pacman_ai.escape_steps >= max_escape_steps and time_in_escape >= min_escape_duration:
                 # Kiểm tra xem có ghost nào ở gần không
                 if should_check_ghosts:
                     nearby_ghosts = self.pacman_ai.check_ghosts_nearby(avoidance_radius=4)
                 if not nearby_ghosts or self.pacman_ai.escape_steps >= max_escape_steps * 2:  # Giảm multiplier để thoát nhanh hơn
                     # An toàn hoặc quá lâu, thoát escape mode
+                    escape_success = not nearby_ghosts  # Success if no ghosts nearby
+                    escape_duration = int(time_in_escape)
+                    
+                    # Determine threat level based on original trigger
+                    threat_level = 'CRITICAL' if max_escape_steps >= 6 else ('HIGH' if max_escape_steps >= 4 else 'MODERATE')
+                    
+                    # LOG escape attempt to visualizer
+                    if hasattr(self, 'visualizer') and self.visualizer:
+                        self.visualizer.log_escape_attempt(escape_success, escape_duration, threat_level)
+                    
                     self.pacman_ai.escape_mode = False
                     self.pacman_ai.escape_steps = 0
-                    print("Thoát xong - tiếp tục")
+                    print(f"✅ Thoát escape mode sau {time_in_escape}ms ({self.pacman_ai.escape_steps} steps)")
                     
                     # Tìm đường thay thế đến goal (không spam log)
                     if not self.find_alternative_path_to_goal():
@@ -3429,6 +3603,16 @@ class PacmanGame:
                     print(f"Pacman touched a normal ghost! Lost a life. Lives remaining: {self.lives - 1}")
                     self.lives -= 1
                     self.last_death_cause = f"Ma {ghost['name']}"  # Track death cause with ghost name
+                    
+                    # Log death to visualizer
+                    if self.visualizer and hasattr(self, 'pacman_ai'):
+                        try:
+                            ghost_data = self.visualizer._collect_ghost_data()
+                            decisions = self.visualizer._collect_decision_data(self.pacman_ai)
+                            self.visualizer.log_death(ghost_data, decisions)
+                        except Exception as e:
+                            pass  # Silent fail
+                    
                     if self.lives <= 0:
                         self.death_time = pygame.time.get_ticks()  # Save death time
                         self.game_state = "game_over"
@@ -3634,6 +3818,26 @@ class PacmanGame:
                 # print(f"Key pressed: {pygame.key.name(event.key)}")
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
+                
+                # Visualizer controls
+                elif event.key == pygame.K_v:
+                    if self.visualizer:
+                        self.visualizer.toggle_visualization()
+                    else:
+                        print("⚠️  Visualizer not available")
+                
+                elif event.key == pygame.K_b:
+                    if self.visualizer:
+                        self.visualizer.print_real_time_analysis()
+                    else:
+                        print("⚠️  Visualizer not available")
+                
+                elif event.key == pygame.K_s and pygame.key.get_mods() & pygame.KMOD_SHIFT:
+                    if self.visualizer:
+                        self.visualizer.save_analysis_report()
+                    else:
+                        print("⚠️  Visualizer not available")
+                
                 elif event.key == pygame.K_p:
                     self.game_state = "paused" if self.game_state == "playing" else "playing"
                 elif event.key == pygame.K_a:
@@ -3736,8 +3940,9 @@ class PacmanGame:
         print("Placing dots and pellets...")
         self.place_dots_and_pellets()
         
-        print("Placing bombs...")
-        self.place_bombs()
+        # Bombs are already generated in maze generation - no need to place again
+        print("Loading bombs from maze generator...")
+        self.load_bombs_from_maze_generator()
 
         print("Creating/resetting ghosts...")
         # Always recreate ghosts to ensure clean state
@@ -3823,8 +4028,9 @@ class PacmanGame:
         print("Placing dots and pellets...")
         self.place_dots_and_pellets()
         
-        print("Placing bombs...")
-        self.place_bombs()
+        # Bombs are already generated in maze generation - no need to place again
+        print("Loading bombs from maze generator...")
+        self.load_bombs_from_maze_generator()
 
         print("Creating/resetting ghosts...")
         # Always recreate ghosts to ensure clean state
@@ -3851,6 +4057,13 @@ class PacmanGame:
             self.fps_history.append(current_fps)
             if len(self.fps_history) > 60:  # Keep last 60 frames
                 self.fps_history.pop(0)
+        
+        # Update visualizer with current AI state
+        if self.visualizer and hasattr(self, 'pacman_ai'):
+            try:
+                self.visualizer.update(self.pacman_ai)
+            except Exception as e:
+                pass  # Silent fail to not disrupt gameplay
 
         # ENSURE AUTO MODE STAYS OFF UNLESS EXPLICITLY ENABLED BY USER
         if self.auto_mode and not hasattr(self, '_user_enabled_auto'):
@@ -3932,6 +4145,19 @@ class PacmanGame:
         # Draw FPS info if enabled
         if self.show_fps_info:
             self.draw_fps_info()
+        
+        # Render visualizer overlay (if enabled)
+        if self.visualizer:
+            try:
+                self.visualizer.render(self.screen, self.cell_size)
+            except Exception as e:
+                pass  # Silent fail to not disrupt gameplay
+        
+        # Draw game state notifications LAST (on top of everything)
+        if self.game_state == "game_over":
+            self.draw_game_over_notification()
+        elif self.game_state == "level_complete":
+            self.draw_win_notification()
             
         pygame.display.flip()
 
@@ -3979,8 +4205,9 @@ class PacmanGame:
         bomb_grid = set()
         for bomb in self.bombs:
             bomb_x, bomb_y = bomb
-            grid_col = int(bomb_x / self.cell_size)
-            grid_row = int(bomb_y / self.cell_size)
+            # Use round() for accurate conversion from center position
+            grid_col = round(bomb_x / self.cell_size - 0.5)
+            grid_row = round(bomb_y / self.cell_size - 0.5)
             bomb_grid.add((grid_row, grid_col))
         return bomb_grid
 

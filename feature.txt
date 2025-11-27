@@ -1,2 +1,0 @@
-tạo 2 giao diện so sánh thuật toán, tối ưu với né ma, thuật toán ML tự động học dựa trên kết quả để né ma
-trong so sánh thuật toán tạo benchmark để đánh giá 2 thuật toán
