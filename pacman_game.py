@@ -165,9 +165,12 @@ class PacmanGame:
         """Generate maze with Pacman-style layout"""
         max_attempts = 10
         for attempt in range(max_attempts):
+            # NOTE: generate_maze() already calls generate_bomb_positions() internally
+            # So bombs are ALWAYS synchronized with the current maze attempt
             self.maze, self.start, self.goal = self.maze_gen.generate_maze()
             # Ensure start and goal are in good positions
             if self.validate_pacman_layout():
+                print(f"✅ Generated valid maze on attempt {attempt + 1}")
                 break
         else:
             print("Warning: Could not generate suitable Pacman maze")
