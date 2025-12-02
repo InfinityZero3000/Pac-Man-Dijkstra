@@ -141,19 +141,18 @@ class MazeGenerator:
                 if start_dist <= 5 or goal_dist <= 5:
                     continue
                 
-                # Check surrounding walls (avoid dead ends)
-                surrounding_walls = 0
-                for dy in [-1, 0, 1]:
-                    for dx in [-1, 0, 1]:
-                        if dy == 0 and dx == 0:
-                            continue
-                        ny, nx = row + dy, col + dx
-                        if 0 <= ny < self.height and 0 <= nx < self.width:
-                            if self.maze[ny, nx] == 1:
-                                surrounding_walls += 1
+                # Check adjacent paths (only 4 directions: up, down, left, right)
+                # Bomb should only be placed at intersections (3+ paths) to avoid blocking corridors
+                path_up = 0 <= row-1 < self.height and self.maze[row-1, col] == 0
+                path_down = 0 <= row+1 < self.height and self.maze[row+1, col] == 0
+                path_left = 0 <= col-1 < self.width and self.maze[row, col-1] == 0
+                path_right = 0 <= col+1 < self.width and self.maze[row, col+1] == 0
                 
-                # Skip if surrounded by too many walls (dead end)
-                if surrounding_walls >= 6:
+                adjacent_paths = sum([path_up, path_down, path_left, path_right])
+                
+                # STRICT: Only allow bombs at intersections (3 or 4 adjacent paths)
+                # This ensures bombs are never placed in narrow corridors or corners
+                if adjacent_paths < 3:
                     continue
                 
                 valid_positions.append((row, col))
@@ -206,19 +205,20 @@ class MazeGenerator:
                     continue
                 
                 # Test if adding this bomb still allows path to goal
+                # Use shortest_path_with_bomb_avoidance to match runtime behavior
                 temp_bombs = selected_bombs + [(row, col)]
-                path, distance = dijkstra.shortest_path_with_obstacles(
-                    self.start, self.goal, set(temp_bombs)
+                path, distance = dijkstra.shortest_path_with_bomb_avoidance(
+                    self.start, self.goal, temp_bombs, bomb_positions_are_grid=True, enable_logging=False
                 )
                 
                 if path and distance <= initial_distance * 1.5:
                     selected_bombs.append((row, col))
                     print(f"✅ MazeGenerator: Bomb #{len(selected_bombs)} at Grid({row}, {col}) - Path still exists ({distance} steps)")
             
-            # Final verification
+            # Final verification with bomb avoidance
             if selected_bombs:
-                final_path, final_dist = dijkstra.shortest_path_with_obstacles(
-                    self.start, self.goal, set(selected_bombs)
+                final_path, final_dist = dijkstra.shortest_path_with_bomb_avoidance(
+                    self.start, self.goal, selected_bombs, bomb_positions_are_grid=True, enable_logging=False
                 )
                 if final_path:
                     self.bomb_positions = selected_bombs

@@ -320,6 +320,15 @@ class PacmanGame:
         
         print(f"\n📦 Loading {len(self.maze_gen.bomb_positions)} bombs from MazeGenerator")
         
+        # CRITICAL: Verify maze exists and matches maze_gen
+        if not hasattr(self, 'maze') or self.maze is None:
+            print("❌ ERROR: self.maze not initialized yet!")
+            return
+        
+        if self.maze.shape != (self.maze_gen.height, self.maze_gen.width):
+            print(f"❌ ERROR: Maze dimension mismatch! self.maze={self.maze.shape} vs maze_gen=({self.maze_gen.height}, {self.maze_gen.width})")
+            return
+        
         for row, col in self.maze_gen.bomb_positions:
             # Verify position is valid
             if not (0 <= row < self.maze_gen.height and 0 <= col < self.maze_gen.width):
@@ -328,7 +337,8 @@ class PacmanGame:
             
             maze_value = self.maze[row, col]
             if maze_value != 0:
-                print(f"❌ Bomb at Grid({row}, {col}) not on path (maze={maze_value}) - SKIPPED")
+                print(f"❌ Bomb at Grid({row}, {col}) NOT ON PATH (maze[{row},{col}]={maze_value}) - SKIPPED")
+                # This should NEVER happen if maze_generator works correctly!
                 continue
             
             # Convert grid to pixel coordinates (center of cell)
@@ -338,7 +348,7 @@ class PacmanGame:
             self.bombs.append((center_x, center_y))
             print(f"✅ Loaded bomb at Grid({row}, {col}) -> Pixel({center_x:.1f}, {center_y:.1f})")
         
-        print(f"✅ Successfully loaded {len(self.bombs)} bombs\n")
+        print(f"✅ Successfully loaded {len(self.bombs)} bombs (ALL on valid paths)\n")
 
     def place_bombs_OLD_DEPRECATED(self):
         """
@@ -2566,7 +2576,7 @@ class PacmanGame:
         if not hasattr(self, 'last_ai_call'):
             self.last_ai_call = 0
         if not hasattr(self, 'ai_decision_cooldown'):
-            self.ai_decision_cooldown = 200  # 200ms cooldown between AI decisions
+            self.ai_decision_cooldown = 100  # 100ms cooldown between AI decisions (giảm từ 200ms)
             
         current_time = pygame.time.get_ticks()
         ai_can_act = (current_time - self.last_ai_call) >= self.ai_decision_cooldown
@@ -2583,13 +2593,17 @@ class PacmanGame:
                 # Fall back to simple emergency logic below
         
         # EMERGENCY FALLBACK - Simple emergency stop for critical proximity (≤ 1 cell)
-        critical_ghosts = []
-        for ghost_pos, distance in nearby_ghosts:
-            if distance <= 1:  # Only immediate collision threat
-                critical_ghosts.append({
-                    'distance': distance,
-                    'position': ghost_pos
-                })
+        # IMPORTANT: Chỉ chạy khi AI KHÔNG đang trong escape mode (tránh conflict)
+        if not (hasattr(self.pacman_ai, 'escape_mode') and self.pacman_ai.escape_mode):
+            critical_ghosts = []
+            for ghost_pos, distance in nearby_ghosts:
+                if distance <= 1:  # Only immediate collision threat
+                    critical_ghosts.append({
+                        'distance': distance,
+                        'position': ghost_pos
+                    })
+        else:
+            critical_ghosts = []  # AI đang xử lý, không trigger EMERGENCY fallback
         
         if critical_ghosts:
             # Find immediate escape direction away from all critical ghosts
@@ -2730,7 +2744,19 @@ class PacmanGame:
 
         # ESCAPE MODE: Kiểm tra nếu đang trong chế độ thoát hiểm
         if getattr(self.pacman_ai, 'escape_mode', False):
-            self.pacman_ai.escape_steps += 1
+            # Track previous position để detect movement
+            if not hasattr(self.pacman_ai, 'escape_last_pos'):
+                self.pacman_ai.escape_last_pos = [self.pacman_pos[0], self.pacman_pos[1]]
+            
+            # Chỉ increment steps khi Pacman THỰC SỰ DI CHUYỂN (position thay đổi)
+            current_pos = [int(round(self.pacman_pos[0])), int(round(self.pacman_pos[1]))]
+            last_pos = [int(round(self.pacman_ai.escape_last_pos[0])), int(round(self.pacman_ai.escape_last_pos[1]))]
+            
+            if current_pos != last_pos:
+                self.pacman_ai.escape_steps += 1
+                self.pacman_ai.escape_last_pos = [self.pacman_pos[0], self.pacman_pos[1]]
+                # Debug: confirm movement
+                # print(f"  📍 Escape step {self.pacman_ai.escape_steps}: {last_pos} → {current_pos}")
             
             # Giảm thời gian escape để Pacman không bị kẹt lâu
             max_escape_steps = getattr(self.pacman_ai, 'min_escape_distance', 3)  # Mặc định 3 bước
@@ -2775,20 +2801,24 @@ class PacmanGame:
                 if should_check_ghosts:
                     nearby_ghosts = self.pacman_ai.check_ghosts_nearby(avoidance_radius=4)  # Tăng từ 2 lên 4
             
-            # Trong escape mode, tiếp tục di chuyển theo hướng hiện tại
+            # Trong escape mode, MAINTAIN escape direction để Pacman tiếp tục chạy
+            # Đây là lý do tại sao escape mode có 0 steps - direction không được maintain!
+            # KHÔNG return sớm, để logic dưới vẫn chạy (find_simple_goal, etc.)
             if nearby_ghosts:
                 min_distance = min(d for _, d in nearby_ghosts)
-                if min_distance <= 1:  # Chỉ khi CỰC gần mới emergency
+                if min_distance <= 1:  # Chỉ khi CỰC gần mới re-evaluate
                     # Add emergency throttling to prevent spam
                     if not hasattr(self, 'last_emergency_call'):
                         self.last_emergency_call = 0
                     if (current_time - self.last_emergency_call) >= 100:  # 100ms cooldown for emergency
                         if self.pacman_ai.emergency_ghost_avoidance(nearby_ghosts):
                             self.last_emergency_call = current_time
-                            return
+                            # Continue to rest of logic (không return)
+            # SKIP ghost avoidance logic dưới (đã xử lý trong escape mode)
+            # Nhảy thẳng xuống find_simple_goal
 
-        # GHOST AVOIDANCE: Chỉ kiểm tra khi cần thiết
-        if nearby_ghosts:
+        # GHOST AVOIDANCE: Chỉ kiểm tra khi cần thiết (SKIP nếu đang trong escape mode!)
+        if nearby_ghosts and not getattr(self.pacman_ai, 'escape_mode', False):
             min_distance = min(d for _, d in nearby_ghosts)
             # Chỉ in log khi thực sự rất nguy hiểm - comment để game mượt
             # if min_distance <= 2:

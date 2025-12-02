@@ -36,10 +36,10 @@ class PacmanAI:
         # Ghost avoidance variables
         self.escape_mode = False  # Đang trong chế độ thoát hiểm
         self.escape_steps = 0     # Số bước đã di chuyển thoát hiểm
-        self.min_escape_distance = 8  # Tối thiểu 8 bước trước khi quay lại (tăng từ 6)
+        self.min_escape_distance = 5  # Tối thiểu 5 bước trước khi quay lại (giảm từ 8)
         self.original_direction = None  # Hướng đi ban đầu trước khi quay đầu
         self.escape_commit_time = 0  # Thời điểm bắt đầu escape
-        self.min_escape_duration = 1200  # Tối thiểu 1200ms phải commit vào escape (tăng từ 800ms)
+        self.min_escape_duration = 400  # Tối thiểu 400ms phải commit vào escape (giảm từ 1200ms)
         
         # Emergency turn tracking
         self.last_emergency_turn = 0
@@ -144,17 +144,17 @@ class PacmanAI:
         """
         current_time = pygame.time.get_ticks()
 
-        # Kiểm tra tình trạng bom chặn đường trước khi thực hiện ghost avoidance
-        bomb_threat = self.check_bomb_threat_level()
-        if bomb_threat['threat_level'] == 'COMPLETE_BLOCKAGE':
-            print(f"🚨 CẢNH BÁO KHẨN CẤP: Pacman bị kẹt giữa ma và bom!")
-            print(f"   👻 Ma đuổi: {len(nearby_ghosts)} con")
-            print(f"   💣 Bom chặn: {bomb_threat['bomb_count']} quả") 
-            print(f"   ⚡ Tình huống: NÓT THẮT SINH TỬ!")
-        elif bomb_threat['threat_level'] == 'DANGEROUS_PATH_ONLY':
-            print(f"⚠️  NGUY HIỂM KÉP: Ma đuổi + chỉ có đường qua bom!")
-            print(f"   👻 Số ma: {len(nearby_ghosts)}")
-            print(f"   💣 Phải qua: {bomb_threat['bomb_count']} vùng bom")
+        # Chỉ kiểm tra bomb threat khi có ma thực sự nguy hiểm (distance <= 3)
+        # và không kiểm tra liên tục (throttle 2 giây)
+        if not hasattr(self, '_last_bomb_check_time'):
+            self._last_bomb_check_time = 0
+        
+        has_critical_ghost = any(dist <= 3 for _, dist in nearby_ghosts)
+        if has_critical_ghost and (current_time - self._last_bomb_check_time) > 2000:
+            self._last_bomb_check_time = current_time
+            bomb_threat = self.check_bomb_threat_level()
+            if bomb_threat['threat_level'] == 'COMPLETE_BLOCKAGE':
+                print(f"🚨 CẢNH BÁO KHẨN CẤP: Pacman bị kẹt giữa ma và bom!")
 
         # Khởi tạo biến nếu chưa có
         if not hasattr(self, 'last_emergency_turn'):
@@ -216,12 +216,12 @@ class PacmanAI:
                     adaptive_cooldown = 400 + (self.escape_timeout_count * 100)  # Increased from 150+75 to 400+100
                     print(f"🚫 Extended cooldown: {adaptive_cooldown}ms, timeout count: {self.escape_timeout_count}")
             else:
-                # Normal adaptive cooldown - much longer to reduce "bối rối"
-                base_cooldown = 250 if self.consecutive_turns <= 1 else 400  # Tăng mạnh từ 80/120 lên 250/400
-                adaptive_cooldown = max(150, base_cooldown - (self.recent_deaths * 10))  # Tăng min từ 50 lên 150
+                # Normal adaptive cooldown - balanced for responsiveness
+                base_cooldown = 100 if self.consecutive_turns <= 1 else 180  # Giảm từ 250/400 xuống 100/180
+                adaptive_cooldown = max(60, base_cooldown - (self.recent_deaths * 10))  # Giảm min từ 150 xuống 60
         else:
-            base_cooldown = 250 if self.consecutive_turns <= 1 else 400  # Tăng mạnh từ 80/120 lên 250/400
-            adaptive_cooldown = max(150, base_cooldown - (self.recent_deaths * 10))  # Tăng min từ 50 lên 150
+            base_cooldown = 100 if self.consecutive_turns <= 1 else 180  # Giảm từ 250/400 xuống 100/180
+            adaptive_cooldown = max(60, base_cooldown - (self.recent_deaths * 10))  # Giảm min từ 150 xuống 60
         
         # CHECK ESCAPE COMMIT - Nếu đang trong escape mode, phải commit đủ lâu
         if not hasattr(self, 'escape_commit_time'):
@@ -715,10 +715,11 @@ class PacmanAI:
         
         # 3. Movement direction analysis + MOMENTUM
         current_dir = self.game.pacman_direction
-        # MOMENTUM BONUS: Ưu tiên tiếp tục theo hướng hiện tại
-        if current_dir and direction[0] == current_dir[0] and direction[1] == current_dir[1]:
+        # MOMENTUM BONUS: Ưu tiên tiếp tục theo hướng hiện tại (nhưng không bonus cho đứng yên!)
+        if (current_dir and direction[0] == current_dir[0] and direction[1] == current_dir[1] 
+            and not (direction[0] == 0 and direction[1] == 0)):  # Không bonus cho (0,0) - đứng yên
             score += 30  # Bonus mạnh cho việc tiếp tục hướng hiện tại
-            print(f"  ⚡ MOMENTUM BONUS (+30) for continuing direction {direction}")
+            # Removed verbose log: print(f"  ⚡ MOMENTUM BONUS (+30) for continuing direction {direction}")
         
         for ghost in danger_analysis:
             ghost_row, ghost_col = ghost['pos']
@@ -1343,8 +1344,7 @@ class PacmanAI:
         # Ghost ở sau nếu dot product âm (góc > 90 độ)
         is_behind = dot_product < 0
         
-        if is_behind:
-            print(f"  🔙 Ghost ở SAU LƯNG: ghost=({ghost_row},{ghost_col}), pacman=({pacman_row},{pacman_col}), goal=({goal_row},{goal_col}), dot={dot_product}")
+        # Removed verbose log: if is_behind: print(...)
         
         return is_behind
 

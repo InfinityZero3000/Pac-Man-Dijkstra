@@ -37,7 +37,7 @@ class GhostAvoidanceVisualizer:
             game_instance: Instance của PacmanGame
         """
         self.game = game_instance
-        self.enabled = True
+        self.enabled = False
         
         # Visualization settings
         self.show_threat_zones = True
@@ -470,14 +470,14 @@ class GhostAvoidanceVisualizer:
         
         decisions = self.current_frame_data['decisions']
         # Position aligned with FPS panel, below Performance Metrics
-        panel_height = 130
+        panel_height = 150  # Tăng từ 130
         panel_width = 240
         maze_width = self.game.maze_gen.width * self.game.cell_size
         x_offset = maze_width + 5
-        y_offset = 260
+        y_offset = 275  # Tăng từ 260 (do panel trên cao hơn)
         
         # Background panel
-        panel_rect = pygame.Rect(x_offset, y_offset, 240, 130)
+        panel_rect = pygame.Rect(x_offset, y_offset, 240, 150)  # Tăng từ 130
         pygame.draw.rect(screen, (0, 0, 0, 180), panel_rect)
         pygame.draw.rect(screen, (255, 255, 255), panel_rect, 2)
         
@@ -508,7 +508,7 @@ class GhostAvoidanceVisualizer:
     def _render_metrics(self, screen):
         """Render performance metrics"""
         # Move to right side (middle position)
-        panel_height = 110
+        panel_height = 125  # Tăng từ 110
         panel_width = 240
         # Position aligned with FPS panel, below it
         maze_width = self.game.maze_gen.width * self.game.cell_size
@@ -516,7 +516,7 @@ class GhostAvoidanceVisualizer:
         y_offset = 140
         
         # Background panel
-        panel_rect = pygame.Rect(x_offset, y_offset, 240, 110)
+        panel_rect = pygame.Rect(x_offset, y_offset, 240, 125)  # Tăng từ 110
         pygame.draw.rect(screen, (0, 0, 0, 180), panel_rect)
         pygame.draw.rect(screen, (255, 255, 255), panel_rect, 2)
         

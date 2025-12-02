@@ -1224,19 +1224,17 @@ class DijkstraAlgorithm:
         # Thử pathfinding với bomb radius avoidance  
         radius_path, _ = self.shortest_path_with_bomb_radius_avoidance(start, goal, bomb_positions, enable_logging=False)
         
-        # Phân tích mức độ chặn
+        # Phân tích mức độ chặn (removed verbose logs)
         if not normal_path and not safe_path and not radius_path:
-            print("🚨 Tất cả đường bị chặn!")
+            # print("🚨 Tất cả đường bị chặn!")  # Removed spam log
             return True, 'COMPLETE_BLOCKAGE', 0
             
         elif normal_path and not safe_path:
-            print("⚠️ Chỉ có đường nguy hiểm!")
-            print(f"   💣 Đường nguy hiểm qua: {len(bomb_positions)} vùng bom")
-            print(f"   ⚡ Khuyến nghị: Di chuyển thận trọng hoặc đợi")
+            # Removed verbose spam logs
             return True, 'DANGEROUS_PATH_ONLY', 1
             
         elif safe_path and not normal_path:
-            print("✅ Tìm được đường tránh bom!")
+            # print("✅ Tìm được đường tránh bom!")  # Removed spam log
             return False, 'SAFE_DETOUR', 1
             
         else:
