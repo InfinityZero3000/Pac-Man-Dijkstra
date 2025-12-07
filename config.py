@@ -39,8 +39,23 @@ NORMAL_UPDATE_INTERVAL_MS = 400  # Reduced from 800ms for more frequent updates
 ENABLE_GHOST_AVOIDANCE_LOGGING = True  # Log dual algorithm decisions
 LOG_PATH_EVERY_N_STEPS = 5  # Log progress every N steps
 
-# Movement Speed Settings (blocks per second)
-PACMAN_SPEED = 4  # Tăng tốc độ Pacman để xử lý kịp với thuật toán né ma mới
-GHOST_SPEED = 3   # Ghost movement speed (slower than Pacman)
-GHOST_EYES_SPEED = 4.0  # Ghost eyes return speed (fastest)
-PACMAN_LEGACY_SPEED = 4  # Tăng legacy speed để theo kịp
+# Movement Speed Settings (blocks per second - independent of FPS)
+# These speeds represent how many grid blocks the character moves per second
+PACMAN_SPEED = 4.0  # Pacman moves 4 blocks per second
+GHOST_SPEED = 3.0   # Ghost moves 3 blocks per second (slower than Pacman)
+GHOST_EYES_SPEED = 5.0  # Ghost eyes return speed (fastest - 5 blocks per second)
+PACMAN_LEGACY_SPEED = 4.0  # Legacy speed for compatibility
+
+# Dynamic Speed Control Settings
+ENABLE_DYNAMIC_SPEED = False  # Enable/disable Pacman slowdown when near ghosts
+DYNAMIC_SPEED_VERY_CLOSE = 0.5  # Speed multiplier when ghost is very close (≤2 blocks)
+DYNAMIC_SPEED_CLOSE = 0.7       # Speed multiplier when ghost is close (≤4 blocks)  
+DYNAMIC_SPEED_NEARBY = 0.85     # Speed multiplier when ghost is nearby (≤6 blocks)
+
+# FPS Settings
+TARGET_FPS = 60  # Target frame rate (can be changed without affecting movement speed)
+MAX_DELTA_TIME = 1.0 / 30.0  # Cap delta time to prevent large jumps (minimum 30 FPS)
+
+# Performance Optimization Settings
+COLLISION_CHECK_DISTANCE = 60  # Max distance to check for dot collisions (pixels)
+ENABLE_SPATIAL_OPTIMIZATION = True  # Use spatial partitioning for collision detection

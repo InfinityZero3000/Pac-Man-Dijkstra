@@ -18,6 +18,7 @@ class DijkstraAlgorithm:
         self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._height, self._width = self.maze_gen.maze.shape
         self.last_run_stats = None
+        self.last_nodes_explored = 0  # Quick access to nodes explored
         self.validator = PathValidator(maze_generator)
         
         # Advanced pathfinding state
@@ -84,6 +85,7 @@ class DijkstraAlgorithm:
                     'computation_time_ms': dt_ms,
                     'success': True,
                 }
+                self.last_nodes_explored = explored  # Quick access
                 return clean_path, len(clean_path) - 1  # Return step count as distance
 
             if g > dist.get(node, float('inf')):
@@ -105,6 +107,7 @@ class DijkstraAlgorithm:
             'computation_time_ms': (datetime.now() - t0).total_seconds() * 1000,
             'success': False,
         }
+        self.last_nodes_explored = explored  # Quick access
         return None, float('inf')
 
     def shortest_path_with_ghost_avoidance(self, start, goal, ghost_positions, avoidance_radius=3, enable_logging=True):
@@ -1221,19 +1224,17 @@ class DijkstraAlgorithm:
         # Thử pathfinding với bomb radius avoidance  
         radius_path, _ = self.shortest_path_with_bomb_radius_avoidance(start, goal, bomb_positions, enable_logging=False)
         
-        # Phân tích mức độ chặn
+        # Phân tích mức độ chặn (removed verbose logs)
         if not normal_path and not safe_path and not radius_path:
-            print("🚨 Tất cả đường bị chặn!")
+            # print("🚨 Tất cả đường bị chặn!")  # Removed spam log
             return True, 'COMPLETE_BLOCKAGE', 0
             
         elif normal_path and not safe_path:
-            print("⚠️ Chỉ có đường nguy hiểm!")
-            print(f"   💣 Đường nguy hiểm qua: {len(bomb_positions)} vùng bom")
-            print(f"   ⚡ Khuyến nghị: Di chuyển thận trọng hoặc đợi")
+            # Removed verbose spam logs
             return True, 'DANGEROUS_PATH_ONLY', 1
             
         elif safe_path and not normal_path:
-            print("✅ Tìm được đường tránh bom!")
+            # print("✅ Tìm được đường tránh bom!")  # Removed spam log
             return False, 'SAFE_DETOUR', 1
             
         else:
