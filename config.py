@@ -24,16 +24,16 @@ CLEAN_INVALID_POSITIONS = True
 
 # Dual Algorithm Settings for Ghost Avoidance
 USE_DUAL_ALGORITHM = True  # Enable dual algorithm approach
-GHOST_AVOIDANCE_RADIUS = 6  # Increased from 4 to 6 for better safety margin
-GHOST_PENALTY_MULTIPLIER = 10  # Base multiplier for ghost penalties
+GHOST_AVOIDANCE_RADIUS = 8  # Increased from 6 to 8 for much better safety margin
+GHOST_PENALTY_MULTIPLIER = 15  # Increased from 10 for stronger ghost avoidance
 ALLOW_RISKY_PATHS = True  # Allow slightly dangerous paths if much shorter
-RISKY_PATH_THRESHOLD = 1.5  # Allow paths up to 50% longer if avoidance path exists
+RISKY_PATH_THRESHOLD = 1.3  # Reduced from 1.5 - prefer safer paths more
 
-# Path Safety Evaluation
-SAFETY_DANGER_THRESHOLD = 0.15  # Reduced from 0.2 for stricter safety
-EMERGENCY_UPDATE_INTERVAL_MS = 50  # Reduced from 100ms for faster response
-NEAR_DANGER_UPDATE_INTERVAL_MS = 200  # Reduced from 400ms for quicker updates
-NORMAL_UPDATE_INTERVAL_MS = 400  # Reduced from 800ms for more frequent updates
+# Path Safety Evaluation  
+SAFETY_DANGER_THRESHOLD = 0.10  # Reduced from 0.15 for even stricter safety
+EMERGENCY_UPDATE_INTERVAL_MS = 30  # Reduced from 50ms for faster response
+NEAR_DANGER_UPDATE_INTERVAL_MS = 100  # Reduced from 200ms for quicker updates
+NORMAL_UPDATE_INTERVAL_MS = 250  # Reduced from 400ms for more frequent updates
 
 # Logging and Debugging
 ENABLE_GHOST_AVOIDANCE_LOGGING = True  # Log dual algorithm decisions
