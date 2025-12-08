@@ -219,6 +219,10 @@ class DijkstraAlgorithm:
                     row = round(bomb_y / cell_size - 0.5)
                     if 0 <= row < self.maze_gen.height and 0 <= col < self.maze_gen.width:
                         bomb_set.add((int(row), int(col)))
+        
+        # Debug output (disabled by default)
+        # if bomb_set and enable_logging:
+        #     print(f"🔍 Pathfinding from {start} to {goal} avoiding {len(bomb_set)} bombs: {list(bomb_set)[:3]}...")
 
         pq = []  # (f, g, node, path)
         h0 = self._heuristic(start, goal) if getattr(config, 'USE_ASTAR', False) else 0
@@ -475,6 +479,94 @@ class DijkstraAlgorithm:
 
         if enable_logging:
             self._log_error('GOAL_UNREACHABLE_BOMB_RADIUS', {'start': start, 'goal': goal, 'nodes_explored': explored, 'bombs': list(bomb_positions) if bomb_positions else []})
+        self.last_run_stats = {
+            'nodes_explored': explored,
+            'computation_time_ms': (datetime.now() - t0).total_seconds() * 1000,
+            'success': False,
+        }
+        return None, float('inf')
+
+    def shortest_path_with_ghost_and_bomb_avoidance(self, start, goal, ghost_positions, bomb_positions, avoidance_radius=5, enable_logging=False):
+        """
+        CRITICAL: Path tránh CẢ bomb (as walls) VÀ ghost (penalty-based)
+        - Bomb: Coi như tường, KHÔNG BAO GIỜ đi qua
+        - Ghost: Thêm penalty cao cho các cell gần ghost
+        """
+        self.last_run_stats = None
+        if not self._validate_positions(start, goal):
+            return None, float('inf')
+        
+        # Convert bombs to set for fast lookup
+        bomb_set = set()
+        if bomb_positions:
+            if isinstance(bomb_positions, set):
+                bomb_set = bomb_positions
+            else:
+                bomb_set = set(bomb_positions)
+        
+        # Build ghost penalty map
+        ghost_penalty_map = {}
+        if ghost_positions:
+            for ghost_pos in ghost_positions:
+                gr, gc = ghost_pos
+                # Add penalty in radius around ghost
+                for dr in range(-avoidance_radius, avoidance_radius + 1):
+                    for dc in range(-avoidance_radius, avoidance_radius + 1):
+                        check_r = gr + dr
+                        check_c = gc + dc
+                        if 0 <= check_r < self.maze_gen.height and 0 <= check_c < self.maze_gen.width:
+                            manhattan_dist = abs(dr) + abs(dc)
+                            if manhattan_dist <= avoidance_radius and manhattan_dist > 0:
+                                penalty = int(100 * (avoidance_radius - manhattan_dist + 1) / avoidance_radius)
+                                check_pos = (check_r, check_c)
+                                if check_pos not in ghost_penalty_map:
+                                    ghost_penalty_map[check_pos] = penalty
+                                else:
+                                    ghost_penalty_map[check_pos] = max(ghost_penalty_map[check_pos], penalty)
+        
+        # A* pathfinding
+        pq = []
+        h0 = self._heuristic(start, goal) if getattr(config, 'USE_ASTAR', False) else 0
+        heapq.heappush(pq, (h0, 0, start, [start]))
+        
+        dist = {start: 0}
+        visited = set()
+        explored = 0
+        t0 = datetime.now()
+        
+        while pq:
+            f, g, node, path = heapq.heappop(pq)
+            if node in visited:
+                continue
+            visited.add(node)
+            explored += 1
+            
+            if node == goal:
+                dt_ms = (datetime.now() - t0).total_seconds() * 1000
+                self.last_run_stats = {
+                    'nodes_explored': explored,
+                    'computation_time_ms': dt_ms,
+                    'success': True,
+                }
+                return path, len(path) - 1
+            
+            if g > dist.get(node, float('inf')):
+                continue
+            
+            # Get neighbors avoiding bombs
+            for nb in self._get_valid_neighbors_with_bomb_avoidance(node, bomb_set):
+                # Base cost + ghost penalty
+                base_cost = 1
+                ghost_penalty = ghost_penalty_map.get(nb, 0)
+                ng = g + base_cost + ghost_penalty
+                
+                if ng < dist.get(nb, float('inf')):
+                    dist[nb] = ng
+                    npath = path + [nb]
+                    nf = ng + (self._heuristic(nb, goal) if getattr(config, 'USE_ASTAR', False) else 0)
+                    heapq.heappush(pq, (nf, ng, nb, npath))
+        
+        # No path found
         self.last_run_stats = {
             'nodes_explored': explored,
             'computation_time_ms': (datetime.now() - t0).total_seconds() * 1000,
@@ -1038,8 +1130,22 @@ class DijkstraAlgorithm:
     def _get_valid_neighbors_with_bomb_avoidance(self, pos, bomb_set):
         """Get valid neighbors while avoiding bomb positions"""
         neighbors = self.maze_gen.get_neighbors(pos)
-        # Filter out bomb positions
-        return [nb for nb in neighbors if nb not in bomb_set]
+        # Filter out bomb positions - CRITICAL: bom được coi như tường
+        valid = [nb for nb in neighbors if nb not in bomb_set]
+        
+        # Debug: Log khi có bomb neighbor bị loại (disabled by default)
+        # blocked = [nb for nb in neighbors if nb in bomb_set]
+        # if blocked:
+        #     # Rate limit debug output
+        #     if not hasattr(self, '_last_bomb_block_log'):
+        #         self._last_bomb_block_log = 0
+        #     import time
+        #     current = time.time()
+        #     if current - self._last_bomb_block_log > 2:  # Log every 2 seconds max
+        #         print(f"  🚫 At {pos}: blocked {len(blocked)} bomb neighbors: {blocked}")
+        #         self._last_bomb_block_log = current
+        
+        return valid
 
     @staticmethod
     def _is_move_valid(a, b):
@@ -1183,7 +1289,7 @@ class DijkstraAlgorithm:
         self.log_data.append(entry)
 
     def _log_error(self, error_type, error_data):
-        """Log error and display warning for bomb-related path blocking"""
+        """Log error and display warning for bomb-related path blocking (rate limited)"""
         self.log_data.append({
             'session_id': self.session_id,
             'timestamp': datetime.now().isoformat(),
@@ -1192,20 +1298,20 @@ class DijkstraAlgorithm:
             'error_data': error_data,
         })
         
-        # Display warning for bomb-related path blocking
-        if 'BOMB' in error_type:
-            if error_type == 'GOAL_UNREACHABLE_BOMB_AVOIDANCE':
-                print("⚠️ Bom chặn tất cả đường!")
-            elif error_type == 'GOAL_UNREACHABLE_BOMB_RADIUS':
-                print("⚠️ Bán kính bom quá rộng!")
-            elif error_type == 'GOAL_UNREACHABLE_BOMB_PENALTY':
-                print("⚠️ Chi phí bom quá cao!")
-            elif error_type == 'INVALID_PATH_BOMB_AVOIDANCE':
-                print("⚠️ Tuyến đường bị phá hủy!")
-            elif error_type == 'INVALID_PATH_BOMB_RADIUS':
-                print("⚠️ Đường đi quá nguy hiểm!")
-            elif error_type == 'INVALID_PATH_BOMB_PENALTY':
-                print("⚠️ Tuyến đường rủi ro!")
+        # Rate limit warnings to avoid spam (1 warning per 2 seconds per type)
+        if not hasattr(self, '_last_warning_time'):
+            self._last_warning_time = {}
+        
+        current_time = datetime.now().timestamp()
+        last_time = self._last_warning_time.get(error_type, 0)
+        
+        if current_time - last_time < 2.0:  # Skip if less than 2 seconds
+            return
+            
+        self._last_warning_time[error_type] = current_time
+        
+        # Warnings silently logged (removed print to prevent spam)
+        pass
 
     def check_bomb_blockage_status(self, start, goal, bomb_positions=None):
         """
@@ -1214,36 +1320,41 @@ class DijkstraAlgorithm:
         """
         if not bomb_positions:
             return False, 'SAFE', 0
-            
-        # Thử pathfinding thông thường (không tránh bom)
-        normal_path, _ = self.shortest_path(start, goal, enable_logging=False)
         
-        # Thử pathfinding với bomb avoidance
-        safe_path, _ = self.shortest_path_with_bomb_avoidance(start, goal, bomb_positions, enable_logging=False)
-        
-        # Thử pathfinding với bomb radius avoidance  
-        radius_path, _ = self.shortest_path_with_bomb_radius_avoidance(start, goal, bomb_positions, enable_logging=False)
-        
-        # Phân tích mức độ chặn (removed verbose logs)
-        if not normal_path and not safe_path and not radius_path:
-            # print("🚨 Tất cả đường bị chặn!")  # Removed spam log
-            return True, 'COMPLETE_BLOCKAGE', 0
+        # Kiểm tra start và goal hợp lệ
+        if not self._validate_positions(start, goal):
+            return False, 'SAFE', 0
             
-        elif normal_path and not safe_path:
-            # Removed verbose spam logs
-            return True, 'DANGEROUS_PATH_ONLY', 1
+        try:
+            # Thử pathfinding thông thường (không tránh bom)
+            normal_path, _ = self.shortest_path(start, goal, enable_logging=False)
             
-        elif safe_path and not normal_path:
-            # print("✅ Tìm được đường tránh bom!")  # Removed spam log
-            return False, 'SAFE_DETOUR', 1
+            # Thử pathfinding với bomb avoidance
+            safe_path, _ = self.shortest_path_with_bomb_avoidance(start, goal, bomb_positions, enable_logging=False)
             
-        else:
-            alternative_count = sum([1 for path in [normal_path, safe_path, radius_path] if path])
-            if alternative_count > 1:
-                # print(f"✅ NHIỀU LỰA CHỌN: {alternative_count} tuyến đường khả dụng")  # Reduced verbosity
-                # print(f"   📍 Từ: {start} → Đến: {goal}")  # Reduced verbosity
-                pass
-            return False, 'MULTIPLE_OPTIONS', alternative_count
+            # Thử pathfinding với bomb radius avoidance  
+            radius_path, _ = self.shortest_path_with_bomb_radius_avoidance(start, goal, bomb_positions, enable_logging=False)
+            
+            # Phân tích mức độ chặn
+            if not normal_path and not safe_path and not radius_path:
+                return True, 'COMPLETE_BLOCKAGE', 0
+                
+            elif normal_path and not safe_path:
+                return True, 'DANGEROUS_PATH_ONLY', 1
+                
+            elif safe_path and not normal_path:
+                return False, 'SAFE_DETOUR', 1
+                
+            else:
+                alternative_count = sum([1 for path in [normal_path, safe_path, radius_path] if path])
+                if alternative_count > 1:
+                    pass
+                return False, 'MULTIPLE_OPTIONS', alternative_count
+                
+        except Exception as e:
+            # Nếu có lỗi, trả về SAFE để không block game
+            print(f"⚠️ check_bomb_blockage_status error: {e}")
+            return False, 'SAFE', 0
 
     def _get_maze_hash(self):
         return hashlib.md5(self.maze_gen.maze.tobytes()).hexdigest()

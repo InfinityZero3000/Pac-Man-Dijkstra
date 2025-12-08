@@ -41,3 +41,9 @@ Mục tiêu game
     Tích lũy điểm số cao nhất có thể
     Hoàn thành nhiều cấp độ nhất có thể
     Khám phá chế độ tự động để xem AI chơi như thế nào
+
+
+                ctx.fillText('Hệ thống sử dụng 5 phương pháp phát hiện song song', 50, 1000);
+            ctx.fillText('Threat score tổng hợp từ nhiều yếu tố', 50, 1030);
+            ctx.fillText('Anti-loop mechanism tránh rơi vào vòng lặp', 50, 1060);
+            ctx.fillText('Predictive collision check dự đoán 3-6 bước', 50, 1090);
