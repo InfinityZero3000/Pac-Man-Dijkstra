@@ -119,6 +119,7 @@ class PacmanGame:
 
         # Ghosts
         self.ghosts = []
+        self.ghosts_enabled = True  # Toggle ghost visibility and collision
         self.create_ghosts()
 
         # Initialize Pacman AI
@@ -1020,6 +1021,10 @@ class PacmanGame:
 
     def draw_ghosts(self):
         """Draw ghosts using images from public folder"""
+        # Skip drawing ghosts if they are disabled
+        if not self.ghosts_enabled:
+            return
+            
         for ghost in self.ghosts:
             col, row = ghost['pos']
             center = (col * self.cell_size + self.cell_size // 2,
@@ -1198,6 +1203,7 @@ class PacmanGame:
             ("B", "Debug Info", self.WHITE),
             ("F", "Toggle FPS Info", self.GREEN if self.show_fps_info else self.WHITE),
             ("X", "Toggle Bombs", self.RED if self.bombs_enabled else self.WHITE),
+            ("G", "Toggle Ghosts", self.PINK if self.ghosts_enabled else self.WHITE),
             ("R", "Restart Game", self.WHITE),
             ("P", "Pause", self.WHITE),
             ("ESC", "Quit", self.RED),
@@ -1224,6 +1230,13 @@ class PacmanGame:
         bomb_color = self.RED if self.bombs_enabled else (100, 100, 100)
         bomb_text = tiny_font.render(f"💣 Bombs: {bomb_status}", True, bomb_color)
         self.screen.blit(bomb_text, (panel_x, y))
+        y += line_height
+        
+        # Ghosts status
+        ghost_status = "ON" if self.ghosts_enabled else "OFF"
+        ghost_color = self.PINK if self.ghosts_enabled else (100, 100, 100)
+        ghost_text = tiny_font.render(f"👻 Ghosts: {ghost_status}", True, ghost_color)
+        self.screen.blit(ghost_text, (panel_x, y))
         y += line_height
         
         # Path hint status
@@ -1602,6 +1615,10 @@ class PacmanGame:
 
     def move_ghosts(self):
         """Move ghosts with GRID-BASED movement - ONE BLOCK AT A TIME with enhanced AI"""
+        # Skip moving ghosts if they are disabled
+        if not self.ghosts_enabled:
+            return
+            
         for ghost in self.ghosts:
             # Special handling for eaten ghosts (eyes only)
             if ghost.get('eaten', False):
@@ -2714,10 +2731,13 @@ class PacmanGame:
         if not hasattr(self, 'last_ai_call'):
             self.last_ai_call = 0
         if not hasattr(self, 'ai_decision_cooldown'):
-            self.ai_decision_cooldown = 150  # 150ms cooldown between AI decisions (tăng từ 100ms để giảm lộn xộn)
+            self.ai_decision_cooldown = 50  # 50ms cooldown - nhanh hơn để phản ứng kịp ma
             
         current_time = pygame.time.get_ticks()
-        ai_can_act = (current_time - self.last_ai_call) >= self.ai_decision_cooldown
+        
+        # Kiểm tra xem có ghost RẤT gần không (≤3 ô) - bỏ qua cooldown
+        has_close_ghost = any(dist <= 3 for _, dist in nearby_ghosts)
+        ai_can_act = has_close_ghost or ((current_time - self.last_ai_call) >= self.ai_decision_cooldown)
         
         if nearby_ghosts and hasattr(self, 'pacman_ai') and ai_can_act:
             try:
@@ -2744,6 +2764,10 @@ class PacmanGame:
             critical_ghosts = []  # AI đang xử lý, không trigger EMERGENCY fallback
         
         if critical_ghosts:
+            # Get current Pacman position
+            pacman_col = int(round(self.pacman_pos[0]))
+            pacman_row = int(round(self.pacman_pos[1]))
+            
             # Find immediate escape direction away from all critical ghosts
             escape_directions = [[1, 0], [-1, 0], [0, 1], [0, -1]]
             best_escape = None
@@ -2917,8 +2941,8 @@ class PacmanGame:
         # Initialize nearby_ghosts và ghost checking
         nearby_ghosts = []
         
-        # Throttle ghost checking to reduce computational load (check every 80ms for faster response)  
-        should_check_ghosts = (current_time - self.last_ghost_check) > 80
+        # Throttle ghost checking to reduce computational load (check every 50ms for faster response)  
+        should_check_ghosts = (current_time - self.last_ghost_check) > 50
         if should_check_ghosts:
             self.last_ghost_check = current_time
             # Kiểm tra ghosts trong bán kính 6 ô - tăng từ 4 lên 6 để phát hiện sớm hơn
@@ -2945,8 +2969,21 @@ class PacmanGame:
             
             # CHECK COMMIT TIME - Phải commit đủ lâu trước khi có thể thoát escape
             escape_commit_time = getattr(self.pacman_ai, 'escape_commit_time', 0)
-            min_escape_duration = getattr(self.pacman_ai, 'min_escape_duration', 800)
+            min_escape_duration = getattr(self.pacman_ai, 'min_escape_duration', 400)
             time_in_escape = current_time - escape_commit_time
+            
+            # QUAN TRỌNG: Thoát khẩn cấp nếu bị kẹt (không di chuyển được sau 600ms)
+            if time_in_escape > 600 and self.pacman_ai.escape_steps < 2:
+                print(f"⚠️ Escape mode bị kẹt! Chỉ đi được {self.pacman_ai.escape_steps} bước sau {time_in_escape}ms - Thoát ngay!")
+                self.pacman_ai.escape_mode = False
+                self.pacman_ai.escape_steps = 0
+                self.goal_locked = False
+                self.ghost_avoidance_active = False
+                # Tìm hướng mới ngay
+                nearby_ghosts_now = self.pacman_ai.check_ghosts_nearby(avoidance_radius=5)
+                if nearby_ghosts_now:
+                    self.pacman_ai.emergency_ghost_avoidance(nearby_ghosts_now)
+                return
             
             # Kiểm tra xem đã đi đủ xa chưa hoặc quá lâu VÀ đã commit đủ thời gian
             if self.pacman_ai.escape_steps >= max_escape_steps and time_in_escape >= min_escape_duration:
@@ -2974,13 +3011,12 @@ class PacmanGame:
                     if hasattr(self.pacman_ai, '_transition_to_state'):
                         self.pacman_ai._transition_to_state(self.pacman_ai.STATE_SAFE_RETURN)
                     
-                    # === BẮT ĐẦU POST-ESCAPE COOLDOWN ===
-                    # Thay vì tính đường mới ngay, bắt đầu cooldown để chờ ma đi xa
-                    current_direction = self.pacman_direction
-                    if current_direction and current_direction != [0, 0]:
-                        self.pacman_ai.start_post_escape_cooldown(current_direction)
+                    # === QUAY LẠI GOAL NGAY ===
+                    # Bỏ post-escape cooldown để quay lại goal nhanh hơn
+                    # Tính toán đường đi mới đến goal ngay lập tức
+                    self.goal_locked = False  # Mở khóa để tìm goal mới
+                    self.find_goal_first()  # Tìm goal ngay
                     
-                    # KHÔNG tính đường mới ở đây! Để cooldown system xử lý
                 else:
                     # Vẫn có ghost gần nhưng không in quá nhiều log
                     pass
@@ -3200,6 +3236,27 @@ class PacmanGame:
                 ghost_positions = [(int(g['pos'][1]), int(g['pos'][0])) for g in self.ghosts 
                                   if not g.get('scared', False)]
                 self.pacman_ai.find_fallback_target(pacman_pos, ghost_positions)
+        else:
+            # FALLBACK CUỐI CÙNG: Nếu không có goal và không trong avoidance mode
+            # Tìm goal mới hoặc di chuyển random để không đứng im
+            if not self.current_goal:
+                self.find_goal_first()
+            
+            # Nếu vẫn không có goal, di chuyển theo hướng hiện tại hoặc random
+            if not self.current_goal:
+                # Giữ hướng hiện tại nếu có thể
+                if self.pacman_direction and self.pacman_direction != [0, 0]:
+                    px, py = int(round(self.pacman_pos[0])), int(round(self.pacman_pos[1]))
+                    next_x = px + self.pacman_direction[0]
+                    next_y = py + self.pacman_direction[1]
+                    if self.is_valid_position(next_x, next_y):
+                        self.pacman_next_direction = self.pacman_direction[:]
+                    else:
+                        # Tìm hướng random hợp lệ
+                        for test_dir in [[1,0], [-1,0], [0,1], [0,-1]]:
+                            if self.is_valid_position(px + test_dir[0], py + test_dir[1]):
+                                self.pacman_next_direction = test_dir
+                                break
 
     def find_alternative_path_to_goal(self):
         """ENHANCED Tìm đường khác đến goal khi đường hiện tại không an toàn - multiple safety algorithms"""
@@ -3420,6 +3477,9 @@ class PacmanGame:
         heap = [(heuristic(start), 0, start, [])]
         visited = set()
         directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+        
+        # Get bomb positions ONCE before the loop (optimization)
+        bomb_grid = self.get_bomb_grid_positions()
 
         while heap:
             f_score, g_score, (x, y), path = heapq.heappop(heap)
@@ -3436,8 +3496,7 @@ class PacmanGame:
                     first_step = path[0] if path else (dx, dy)
                     return [first_step[0], first_step[1]]
 
-                # Check if position has bomb
-                bomb_grid = self.get_bomb_grid_positions()
+                # Check if position is valid and doesn't have bomb
                 if (nx, ny) not in visited and self.is_valid_position(nx, ny) and (ny, nx) not in bomb_grid:
                     new_g_score = g_score + 1
                     new_f_score = new_g_score + heuristic((nx, ny))
@@ -3791,6 +3850,11 @@ class PacmanGame:
 
     def check_collisions(self):
         """Optimized collision detection with spatial partitioning"""
+        # Get Pacman's grid position (rounded to nearest cell)
+        pacman_grid_col = int(round(self.pacman_pos[0]))
+        pacman_grid_row = int(round(self.pacman_pos[1]))
+        
+        # Also get pixel position for distance-based checks
         pacman_center = (self.pacman_pos[0] * self.cell_size + self.cell_size // 2,
                         self.pacman_pos[1] * self.cell_size + self.cell_size // 2)
 
@@ -3800,43 +3864,53 @@ class PacmanGame:
         # Reset collision counter
         self.collision_checks_per_frame = 0
         
-        # Check dots with early distance filtering
+        # Check dots with improved grid-based detection
         for dot in self.dots[:]:
-            # Quick distance check first (cheaper than hypot)
-            dx = abs(pacman_center[0] - dot[0])
-            dy = abs(pacman_center[1] - dot[1])
+            # Calculate dot's grid position from pixel position
+            dot_grid_col = int(dot[0] / self.cell_size)
+            dot_grid_row = int(dot[1] / self.cell_size)
             
-            # Skip if obviously too far (Manhattan distance check) - NO INCREMENT HERE
-            if dx > max_check_distance or dy > max_check_distance:
-                continue
+            # Check if Pacman is in the same grid cell or very close
+            grid_distance = abs(pacman_grid_col - dot_grid_col) + abs(pacman_grid_row - dot_grid_row)
             
-            # Only count if we actually do the expensive calculation
-            self.collision_checks_per_frame += 1
+            # If in same cell or adjacent cell, do precise check
+            if grid_distance <= 1:
+                # Quick distance check first (cheaper than hypot)
+                dx = abs(pacman_center[0] - dot[0])
+                dy = abs(pacman_center[1] - dot[1])
                 
-            # Only calculate exact distance for nearby dots
-            distance = math.hypot(dx, dy)
-            if distance < 10:
-                self.dots.remove(dot)
-                self.score += 10
+                # Only count if we actually do the expensive calculation
+                self.collision_checks_per_frame += 1
+                    
+                # Increased detection radius from 10 to 15 for better pickup
+                distance = math.hypot(dx, dy)
+                if distance < 15:
+                    self.dots.remove(dot)
+                    self.score += 10
 
         # Check power pellets with same optimization
         for pellet in self.power_pellets[:]:
-            # Quick distance check first
-            dx = abs(pacman_center[0] - pellet[0])
-            dy = abs(pacman_center[1] - pellet[1])
+            # Calculate pellet's grid position from pixel position
+            pellet_grid_col = int(pellet[0] / self.cell_size)
+            pellet_grid_row = int(pellet[1] / self.cell_size)
             
-            # Skip if obviously too far - NO INCREMENT HERE
-            if dx > max_check_distance or dy > max_check_distance:
-                continue
+            # Check if Pacman is in the same grid cell or very close
+            grid_distance = abs(pacman_grid_col - pellet_grid_col) + abs(pacman_grid_row - pellet_grid_row)
             
-            # Only count if we actually do the expensive calculation
-            self.collision_checks_per_frame += 1
+            # If in same cell or adjacent cell, do precise check
+            if grid_distance <= 1:
+                # Quick distance check first
+                dx = abs(pacman_center[0] - pellet[0])
+                dy = abs(pacman_center[1] - pellet[1])
                 
-            # Only calculate exact distance for nearby pellets
-            distance = math.hypot(dx, dy)
-            if distance < 10:
-                self.power_pellets.remove(pellet)
-                self.score += 50
+                # Only count if we actually do the expensive calculation
+                self.collision_checks_per_frame += 1
+                    
+                # Increased detection radius from 10 to 15 for better pickup
+                distance = math.hypot(dx, dy)
+                if distance < 15:
+                    self.power_pellets.remove(pellet)
+                    self.score += 50
 
                 # Play wakawaka sound for power pellet
                 if hasattr(self, 'wakawaka_sound') and self.wakawaka_sound:
@@ -3882,73 +3956,96 @@ class PacmanGame:
                     break  # Only lose one life per collision check
 
         # CHỈ KIỂM TRA: Ghosts collision - IMPROVED with larger detection radius
-        for ghost in self.ghosts:
-            # Skip if ghost is already eaten in this frame
-            if ghost.get('eaten', False):
-                continue
+        # Skip ghost collision if ghosts are disabled
+        if self.ghosts_enabled:
+            for ghost in self.ghosts:
+                # Skip if ghost is already eaten in this frame
+                if ghost.get('eaten', False):
+                    continue
                 
-            ghost_center = (ghost['pos'][0] * self.cell_size + self.cell_size // 2,
-                          ghost['pos'][1] * self.cell_size + self.cell_size // 2)
-            distance = math.hypot(pacman_center[0] - ghost_center[0],
-                                pacman_center[1] - ghost_center[1])
-            if distance < 20:  # Increased from 15 to 20 for better detection
-                # print(f"Ghost collision detected! Ghost: {ghost['name']}, Scared: {ghost.get('scared', False)}, Distance: {distance:.1f}")
-                if ghost.get('scared', False):
-                    # Eat scared ghost for points
-                    self.score += 200
-                    print(f"Ate {ghost['name']} ghost! +200 points")
-                    
-                    # Play wakawaka sound for eating ghost
-                    if hasattr(self, 'wakawaka_sound') and self.wakawaka_sound:
-                        self.wakawaka_sound.play()
-                    
-                    # Set ghost to eaten state (only eyes visible)
-                    ghost['eaten'] = True
-                    ghost['scared'] = False
-                    ghost['scared_timer'] = 0
-                    # Ghost will move back to spawn as eyes
-                    # IMPORTANT: Break after eating one ghost to avoid multiple collisions in same frame
-                    break
-                else:
-                    # Normal ghost collision - lose life but keep score
-                    print(f"Pacman touched a normal ghost! Lost a life. Lives remaining: {self.lives - 1}")
-                    self.lives -= 1
-                    self.last_death_cause = f"Ma {ghost['name']}"  # Track death cause with ghost name
-                    
-                    # Log death to visualizer
-                    if self.visualizer and hasattr(self, 'pacman_ai'):
-                        try:
-                            ghost_data = self.visualizer._collect_ghost_data()
-                            decisions = self.visualizer._collect_decision_data(self.pacman_ai)
-                            self.visualizer.log_death(ghost_data, decisions)
-                        except Exception as e:
-                            pass  # Silent fail
-                    
-                    if self.lives <= 0:
-                        self.death_time = pygame.time.get_ticks()  # Save death time
-                        self.game_state = "game_over"
-                        print("Game Over! No lives remaining.")
-                        # Update high score
-                        if self.score > self.high_score:
-                            self.high_score = self.score
-                        # Set motivational message only once when game over
-                        if not self.game_over_message:
-                            motivational_messages = [
-                                "🌟 Đừng bỏ cuộc, hãy thử lại!",
-                                "💪 Thất bại là mẹ của thành công!",
-                                "🎯 Lần sau sẽ tốt hơn!",
-                                "🚀 Hãy học hỏi và phát triển!",
-                                "✨ Every ending is a new beginning!",
-                                "🔥 Persistence beats resistance!",
-                                "🌈 The comeback is always stronger!",
-                                "⭐ You're closer than you think!"
-                            ]
-                            self.game_over_message = random.choice(motivational_messages)
+                ghost_center = (ghost['pos'][0] * self.cell_size + self.cell_size // 2,
+                              ghost['pos'][1] * self.cell_size + self.cell_size // 2)
+                distance = math.hypot(pacman_center[0] - ghost_center[0],
+                                    pacman_center[1] - ghost_center[1])
+                if distance < 20:  # Increased from 15 to 20 for better detection
+                    # print(f"Ghost collision detected! Ghost: {ghost['name']}, Scared: {ghost.get('scared', False)}, Distance: {distance:.1f}")
+                    if ghost.get('scared', False):
+                        # Eat scared ghost for points
+                        self.score += 200
+                        print(f"Ate {ghost['name']} ghost! +200 points")
+                        
+                        # Play wakawaka sound for eating ghost
+                        if hasattr(self, 'wakawaka_sound') and self.wakawaka_sound:
+                            self.wakawaka_sound.play()
+                        
+                        # Set ghost to eaten state (only eyes visible)
+                        ghost['eaten'] = True
+                        ghost['scared'] = False
+                        ghost['scared_timer'] = 0
+                        
+                        # === RESET AVOIDANCE MODES ===
+                        # Khi ăn ma, reset tất cả các mode tránh ma để Pacman tiếp tục đi
+                        if hasattr(self, 'pacman_ai'):
+                            if hasattr(self.pacman_ai, 'escape_mode'):
+                                self.pacman_ai.escape_mode = False
+                            if hasattr(self.pacman_ai, 'escape_steps'):
+                                self.pacman_ai.escape_steps = 0
+                            # Chuyển về state NORMAL để có thể tìm goal mới
+                            if hasattr(self.pacman_ai, '_transition_to_state') and hasattr(self.pacman_ai, 'STATE_NORMAL'):
+                                self.pacman_ai._transition_to_state(self.pacman_ai.STATE_NORMAL)
+                        self.ghost_avoidance_active = False
+                        self.goal_locked = False  # Cho phép tìm goal mới
+                        self.goal_cooldown = 0  # Reset cooldown để tìm goal ngay
+                        
+                        # Tính toán đường đi mới ngay lập tức
+                        self.find_goal_first()
+                        if self.current_goal:
+                            self.goal_locked = True
+                            print(f"→ Tìm goal mới sau khi ăn ma: {self.current_goal}")
+                        
+                        # Ghost will move back to spawn as eyes
+                        # IMPORTANT: Break after eating one ghost to avoid multiple collisions in same frame
+                        break
                     else:
-                        # Reset positions but keep score and game state
-                        self.reset_positions_after_death()
-                    # IMPORTANT: Break after losing life to avoid multiple deaths in same frame
-                    break
+                        # Normal ghost collision - lose life but keep score
+                        print(f"Pacman touched a normal ghost! Lost a life. Lives remaining: {self.lives - 1}")
+                        self.lives -= 1
+                        self.last_death_cause = f"Ma {ghost['name']}"  # Track death cause with ghost name
+                        
+                        # Log death to visualizer
+                        if self.visualizer and hasattr(self, 'pacman_ai'):
+                            try:
+                                ghost_data = self.visualizer._collect_ghost_data()
+                                decisions = self.visualizer._collect_decision_data(self.pacman_ai)
+                                self.visualizer.log_death(ghost_data, decisions)
+                            except Exception as e:
+                                pass  # Silent fail
+                        
+                        if self.lives <= 0:
+                            self.death_time = pygame.time.get_ticks()  # Save death time
+                            self.game_state = "game_over"
+                            print("Game Over! No lives remaining.")
+                            # Update high score
+                            if self.score > self.high_score:
+                                self.high_score = self.score
+                            # Set motivational message only once when game over
+                            if not self.game_over_message:
+                                motivational_messages = [
+                                    "🌟 Đừng bỏ cuộc, hãy thử lại!",
+                                    "💪 Thất bại là mẹ của thành công!",
+                                    "🎯 Lần sau sẽ tốt hơn!",
+                                    "🚀 Hãy học hỏi và phát triển!",
+                                    "✨ Every ending is a new beginning!",
+                                    "🔥 Persistence beats resistance!",
+                                    "🌈 The comeback is always stronger!",
+                                    "⭐ You're closer than you think!"
+                                ]
+                                self.game_over_message = random.choice(motivational_messages)
+                        else:
+                            # Reset positions but keep score and game state
+                            self.reset_positions_after_death()
+                        # IMPORTANT: Break after losing life to avoid multiple deaths in same frame
+                        break
 
         # Check exit gate collision (WIN CONDITION)
         if hasattr(self, 'exit_gate'):
@@ -4176,6 +4273,10 @@ class PacmanGame:
                     self.bombs_enabled = not self.bombs_enabled
                     status = "ON" if self.bombs_enabled else "OFF"
                     print(f"💣 Bombs: {status}")
+                elif event.key == pygame.K_g:
+                    self.ghosts_enabled = not self.ghosts_enabled
+                    status = "ON" if self.ghosts_enabled else "OFF"
+                    print(f"👻 Ghosts: {status}")
                 elif event.key == pygame.K_d:
                     config.ENABLE_DYNAMIC_SPEED = not config.ENABLE_DYNAMIC_SPEED
                     status = "ON" if config.ENABLE_DYNAMIC_SPEED else "OFF"
@@ -4449,6 +4550,10 @@ class PacmanGame:
 
     def draw_ghost_return_paths(self):
         """Draw the return paths for eaten ghosts (eyes only)"""
+        # Skip drawing return paths if ghosts are disabled
+        if not self.ghosts_enabled:
+            return
+            
         for ghost in self.ghosts:
             if ghost.get('eaten', False) and hasattr(ghost, 'return_path') and ghost['return_path']:
                 path = ghost['return_path']
@@ -4542,6 +4647,10 @@ class PacmanGame:
 
     def get_bomb_grid_positions(self):
         """Convert bomb pixel positions to grid coordinates"""
+        # Return empty set if bombs are disabled
+        if not self.bombs_enabled:
+            return set()
+        
         bomb_grid = set()
         for bomb in self.bombs:
             bomb_x, bomb_y = bomb

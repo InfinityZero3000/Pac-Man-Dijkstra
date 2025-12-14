@@ -125,6 +125,10 @@ class GhostAvoidanceVisualizer:
     
     def _collect_ghost_data(self):
         """Collect comprehensive ghost data"""
+        # Return empty list if ghosts are disabled
+        if hasattr(self.game, 'ghosts_enabled') and not self.game.ghosts_enabled:
+            return []
+        
         ghost_data = []
         pacman_row, pacman_col = int(self.game.pacman_pos[1]), int(self.game.pacman_pos[0])
         
@@ -319,6 +323,10 @@ class GhostAvoidanceVisualizer:
         if 'ghosts' not in self.current_frame_data:
             return
         
+        # Skip rendering if ghosts are disabled
+        if hasattr(self.game, 'ghosts_enabled') and not self.game.ghosts_enabled:
+            return
+        
         for ghost_data in self.current_frame_data['ghosts']:
             if ghost_data['is_eyes'] or ghost_data['scared']:
                 continue
@@ -399,6 +407,9 @@ class GhostAvoidanceVisualizer:
         if 'ghosts' not in self.current_frame_data:
             return
         
+        # Skip rendering ghost predictions if ghosts are disabled
+        ghosts_enabled = getattr(self.game, 'ghosts_enabled', True)
+        
         pacman_row, pacman_col = self.current_frame_data['pacman_pos']
         pacman_dir = self.game.pacman_direction
         
@@ -416,26 +427,27 @@ class GhostAvoidanceVisualizer:
             center_y = future_row * cell_size + cell_size // 2
             pygame.draw.circle(overlay, color, (center_x, center_y), cell_size // 4)
         
-        # Predict ghost paths
-        for ghost_data in self.current_frame_data['ghosts']:
-            if ghost_data['is_eyes'] or ghost_data['scared']:
-                continue
-            
-            ghost_row, ghost_col = ghost_data['pos']
-            ghost_dir = ghost_data['direction']
-            
-            for step in range(1, 6):
-                future_col = ghost_col + ghost_dir[0] * step
-                future_row = ghost_row + ghost_dir[1] * step
+        # Predict ghost paths only if ghosts are enabled
+        if ghosts_enabled:
+            for ghost_data in self.current_frame_data['ghosts']:
+                if ghost_data['is_eyes'] or ghost_data['scared']:
+                    continue
                 
-                if not self.game.is_valid_position(future_col, future_row):
-                    break
+                ghost_row, ghost_col = ghost_data['pos']
+                ghost_dir = ghost_data['direction']
                 
-                alpha = int(150 * (1 - step / 6))
-                color = (255, 0, 255, alpha)  # Magenta
-                center_x = future_col * cell_size + cell_size // 2
-                center_y = future_row * cell_size + cell_size // 2
-                pygame.draw.circle(overlay, color, (center_x, center_y), cell_size // 5)
+                for step in range(1, 6):
+                    future_col = ghost_col + ghost_dir[0] * step
+                    future_row = ghost_row + ghost_dir[1] * step
+                    
+                    if not self.game.is_valid_position(future_col, future_row):
+                        break
+                    
+                    alpha = int(150 * (1 - step / 6))
+                    color = (255, 0, 255, alpha)  # Magenta
+                    center_x = future_col * cell_size + cell_size // 2
+                    center_y = future_row * cell_size + cell_size // 2
+                    pygame.draw.circle(overlay, color, (center_x, center_y), cell_size // 5)
     
     def _render_escape_routes(self, overlay, cell_size):
         """Render possible escape routes"""

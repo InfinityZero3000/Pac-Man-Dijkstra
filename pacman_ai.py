@@ -182,6 +182,15 @@ class PacmanAI:
                 'recommended_action': str
             }
         """
+        # Return safe state if ghosts are disabled
+        if hasattr(self.game, 'ghosts_enabled') and not self.game.ghosts_enabled:
+            return {
+                'ghosts_in_zone': [],
+                'threat_level': 0,
+                'closest_ghost': None,
+                'recommended_action': 'CONTINUE'
+            }
+        
         current_time = pygame.time.get_ticks()
         
         # Throttle updates để tránh lag
@@ -577,6 +586,14 @@ class PacmanAI:
         """Đánh giá một hướng escape"""
         score = 0
         
+        # 0. QUAN TRỌNG: Kiểm tra BOM trước tiên!
+        if hasattr(self.game, 'get_bomb_grid_positions'):
+            bomb_grid = self.game.get_bomb_grid_positions()
+            if (new_row, new_col) in bomb_grid:
+                # Có bom ở đây - penalty cực lớn!
+                score -= 1000
+                return score  # Trả về ngay, không cần kiểm tra thêm
+        
         # 1. Khoảng cách đến ghost gần nhất
         min_ghost_dist = 999
         for gpos in ghost_positions:
@@ -765,6 +782,10 @@ class PacmanAI:
         """
         ENHANCED Emergency ghost avoidance với adaptive response và anti-loop mechanism
         """
+        # Return False if ghosts are disabled (no avoidance needed)
+        if hasattr(self.game, 'ghosts_enabled') and not self.game.ghosts_enabled:
+            return False
+        
         current_time = pygame.time.get_ticks()
 
         # Chỉ kiểm tra bomb threat khi có ma thực sự nguy hiểm (distance <= 3)
@@ -1630,6 +1651,10 @@ class PacmanAI:
         """
         ENHANCED path checking với adaptive threat assessment và smart rerouting
         """
+        # Return no threat if ghosts are disabled
+        if hasattr(self.game, 'ghosts_enabled') and not self.game.ghosts_enabled:
+            return False, None, 0
+        
         if not self.game.current_goal:
             return False, None, 0
             
@@ -2053,6 +2078,10 @@ class PacmanAI:
         Layer 2: Close threat (≤4) - Tactical  
         Layer 3: Potential threat (≤6) - Preventive
         """
+        # Return empty list if ghosts are disabled
+        if hasattr(self.game, 'ghosts_enabled') and not self.game.ghosts_enabled:
+            return []
+        
         pacman_row, pacman_col = int(self.game.pacman_pos[1]), int(self.game.pacman_pos[0])
         
         nearby_ghosts = []
@@ -2129,6 +2158,10 @@ class PacmanAI:
         Tăng từ 4 lên 6 steps, thêm closing speed detection
         Returns: (bool, ghost_info) - True nếu có nguy cơ va chạm sắp xảy ra
         """
+        # Return no collision if ghosts are disabled
+        if hasattr(self.game, 'ghosts_enabled') and not self.game.ghosts_enabled:
+            return False, None
+        
         pacman_row, pacman_col = int(self.game.pacman_pos[1]), int(self.game.pacman_pos[0])
         pacman_dir = self.game.pacman_direction
         
