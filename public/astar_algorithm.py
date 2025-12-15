@@ -252,4 +252,4 @@ if __name__ == "__main__":
     print(f"Nodes explored: {stats3['nodes_explored']}")
     print(f"Computation time: {stats3['computation_time_ms']:.2f}ms")
     
-    print("\n✅ A* Algorithm tests completed!")
+    print("\nA* Algorithm tests completed!")

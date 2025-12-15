@@ -5,6 +5,7 @@ import math
 import signal
 from maze_generator import MazeGenerator
 from dijkstra_algorithm import DijkstraAlgorithm
+from public.astar_algorithm import AStarAlgorithm
 from pacman_ai import PacmanAI
 from ghost_avoidance_visualizer import GhostAvoidanceVisualizer
 import config
@@ -26,6 +27,7 @@ class PacmanGame:
 
         self.maze_gen = MazeGenerator(width, height, complexity=1)  # Độ phức tạp mê cung
         self.dijkstra = DijkstraAlgorithm(self.maze_gen)
+        self.astar = AStarAlgorithm(self.maze_gen)
         self.cell_size = cell_size
         # Thêm chiều rộng cho panel bên phải (350px)
         self.screen_width = width * cell_size + 380
@@ -2555,6 +2557,17 @@ class PacmanGame:
                     print("🆘 Pacman bị bom bao vây!")
                     self._last_blockage_warning = pygame.time.get_ticks()
         
+        # Ưu tiên A* cho đường đến goal (nhanh hơn) với bom là obstacles
+        try:
+            astar_path, astar_distance = self.astar.shortest_path(pacman_pos, self.current_goal, obstacles=bomb_grid)
+            if astar_path and astar_distance < float('inf'):
+                self.shortest_path = astar_path
+                return
+        except Exception:
+            # Nếu A* gặp lỗi, fallback xuống Dijkstra
+            pass
+
+        # Fallback: Dijkstra (giữ nguyên logic cũ)
         try:
             path, distance = self.dijkstra.shortest_path_with_bomb_avoidance(pacman_pos, self.current_goal, bomb_grid)
             if path and distance < float('inf'):
@@ -2566,7 +2579,7 @@ class PacmanGame:
                     if not hasattr(self, '_last_bomb_path_warning') or pygame.time.get_ticks() - self._last_bomb_path_warning > 2000:
                         print(" Bom chặn đường đến mục tiêu!")
                         self._last_bomb_path_warning = pygame.time.get_ticks()
-        except Exception as e:
+        except Exception:
             self.shortest_path = []
 
     def calculate_hint_path_to_exit(self):
