@@ -222,7 +222,7 @@ class DijkstraAlgorithm:
         
         # Debug output (disabled by default)
         # if bomb_set and enable_logging:
-        #     print(f"🔍 Pathfinding from {start} to {goal} avoiding {len(bomb_set)} bombs: {list(bomb_set)[:3]}...")
+        #     print(f" Pathfinding from {start} to {goal} avoiding {len(bomb_set)} bombs: {list(bomb_set)[:3]}...")
 
         pq = []  # (f, g, node, path)
         h0 = self._heuristic(start, goal) if getattr(config, 'USE_ASTAR', False) else 0
@@ -1142,7 +1142,7 @@ class DijkstraAlgorithm:
         #     import time
         #     current = time.time()
         #     if current - self._last_bomb_block_log > 2:  # Log every 2 seconds max
-        #         print(f"  🚫 At {pos}: blocked {len(blocked)} bomb neighbors: {blocked}")
+        #         print(f"   At {pos}: blocked {len(blocked)} bomb neighbors: {blocked}")
         #         self._last_bomb_block_log = current
         
         return valid
@@ -1353,7 +1353,7 @@ class DijkstraAlgorithm:
                 
         except Exception as e:
             # Nếu có lỗi, trả về SAFE để không block game
-            print(f"⚠️ check_bomb_blockage_status error: {e}")
+            print(f"check_bomb_blockage_status error: {e}")
             return False, 'SAFE', 0
 
     def _get_maze_hash(self):

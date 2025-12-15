@@ -195,5 +195,5 @@ for i, algo in enumerate(algorithms):
 plt.tight_layout()
 plt.savefig('/Users/nguyenhuuthang/Documents/RepoGitHub/game-AI/pacman_ai_flowchart.png', 
             dpi=300, bbox_inches='tight', facecolor='white')
-print("✅ Flowchart đã được tạo: pacman_ai_flowchart.png")
+print("Flowchart đã được tạo: pacman_ai_flowchart.png")
 plt.close()

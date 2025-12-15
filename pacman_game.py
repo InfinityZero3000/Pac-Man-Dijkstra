@@ -11,137 +11,195 @@ import config
 
 class PacmanGame:
     def __init__(self, width=50, height=28, cell_size=30):
+        # Cấu hình mixer trước khi init để giảm rè/độ trễ âm thanh
+        # NOTE: buffer quá nhỏ dễ gây rè/giật khi game nặng CPU, nên cho phép cấu hình qua config.
+        audio_freq = getattr(config, 'AUDIO_FREQUENCY', 44100)
+        audio_size = getattr(config, 'AUDIO_SIZE', -16)
+        audio_channels = getattr(config, 'AUDIO_CHANNELS', 2)
+        audio_buffer = getattr(config, 'AUDIO_BUFFER', 1024)
+        pygame.mixer.pre_init(
+            frequency=audio_freq,
+            size=audio_size,
+            channels=audio_channels,
+            buffer=audio_buffer,
+        )
+
         self.maze_gen = MazeGenerator(width, height, complexity=1)  # Độ phức tạp mê cung
         self.dijkstra = DijkstraAlgorithm(self.maze_gen)
         self.cell_size = cell_size
-        # Add extra width for right panel (350px)
+        # Thêm chiều rộng cho panel bên phải (350px)
         self.screen_width = width * cell_size + 380
-        self.screen_height = (height + 3) * cell_size  # Normal UI space
+        self.screen_height = (height + 3) * cell_size  # Không gian UI chuẩn
 
         pygame.init()
-        pygame.mixer.init()  # Initialize audio mixer
+        pygame.mixer.init()  # Khởi tạo bộ trộn âm thanh
         
-        # Load and play opening sound
+        # Tải và phát nhạc mở màn
+        opening_volume = getattr(config, 'OPENING_VOLUME', 0.5)
         try:
             self.opening_sound = pygame.mixer.Sound('public/opening.wav')
+            self.opening_sound.set_volume(opening_volume)
             self.opening_sound.play()
         except pygame.error as e:
-            print(f"Warning: Could not load opening sound: {e}")
+            print(f"Cảnh báo: Không tải được nhạc mở màn: {e}")
             self.opening_sound = None
         
-        # Load wakawaka sound for eating
+        # Tải âm thanh waka-waka khi ăn
+        waka_volume = getattr(config, 'WAKA_VOLUME', 0.5)
         try:
             self.wakawaka_sound = pygame.mixer.Sound('public/wakaWaka.wav')
+            self.wakawaka_sound.set_volume(waka_volume)
         except pygame.error as e:
-            print(f"Warning: Could not load wakawaka sound: {e}")
+            print(f"Cảnh báo: Không tải được âm thanh waka-waka: {e}")
             self.wakawaka_sound = None
+
+        # Dùng channel riêng + throttle để tránh overlap (nguyên nhân hay gây rè/giật)
+        self.wakawaka_channel = None
+        self._last_wakawaka_play_ms = 0
+        self._wakawaka_min_interval_ms = getattr(config, 'WAKA_MIN_INTERVAL_MS', 90)
+        try:
+            if pygame.mixer.get_init():
+                # Ensure there are enough channels; keep existing if already >= 8
+                current_channels = pygame.mixer.get_num_channels() or 0
+                if current_channels < 8:
+                    pygame.mixer.set_num_channels(8)
+                    current_channels = 8
+                # Reserve the last channel for wakawaka
+                self.wakawaka_channel = pygame.mixer.Channel(current_channels - 1)
+        except Exception:
+            self.wakawaka_channel = None
+
+        # Helper: phát âm thanh ăn hạt an toàn, tránh crash nếu mixer lỗi
+        def _safe_play_wakawaka():
+            if not self.wakawaka_sound:
+                return
+            try:
+                if not pygame.mixer.get_init():
+                    return
+
+                now_ms = pygame.time.get_ticks()
+                if now_ms - self._last_wakawaka_play_ms < self._wakawaka_min_interval_ms:
+                    return
+                self._last_wakawaka_play_ms = now_ms
+
+                if self.wakawaka_channel:
+                    # Avoid stacking many plays on top of each other
+                    if self.wakawaka_channel.get_busy():
+                        return
+                    self.wakawaka_channel.play(self.wakawaka_sound, fade_ms=10)
+                else:
+                    self.wakawaka_sound.play()
+            except Exception as exc:
+                print(f"Cảnh báo: Lỗi phát âm thanh waka-waka: {exc}")
+
+        self.play_wakawaka = _safe_play_wakawaka
         
-        # Setup signal handler for graceful shutdown
+        # Thiết lập signal handler để thoát an toàn
         def signal_handler(signum, frame):
-            print("\nReceived signal, shutting down gracefully...")
+            print("\nNhận tín hiệu, đóng game an toàn...")
             self.running = False
         
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
         
         self.screen = pygame.display.set_mode((self.screen_width, self.screen_height))
-        pygame.display.set_caption("Pacman AI - Intelligent Maze Game")
+        pygame.display.set_caption("Pacman AI - Trò chơi mê cung thông minh")
 
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("arial", 20, bold=True)
         self.large_font = pygame.font.SysFont("arial", 36, bold=True)
 
-        # Colors - Pacman style (Classic Arcade)
+        # Bảng màu phong cách Pacman (Arcade cổ điển)
         self.BLACK = (0, 0, 0)
         self.WHITE = (255, 255, 255)
         self.YELLOW = (255, 255, 0)
-        self.BLUE = (33, 33, 222)  # Classic arcade blue
-        self.LIGHT_BLUE = (33, 150, 243)  # For highlights
+        self.BLUE = (33, 33, 222)  # Xanh arcade cổ điển
+        self.LIGHT_BLUE = (33, 150, 243)  # Màu nhấn
         self.RED = (255, 0, 0)
         self.PINK = (255, 184, 255)
         self.CYAN = (0, 255, 255)
         self.ORANGE = (255, 184, 82)
         self.DARK_BLUE = (0, 0, 100)
-        self.GREEN = (0, 255, 0)  # Green for active indicators
-        self.WALL_COLOR = (33, 33, 222)  # Main wall color
-        self.WALL_HIGHLIGHT = (82, 130, 255)  # Wall highlight for 3D effect
-        self.DOT_GLOW = (255, 255, 200)  # Dot glow color
+        self.GREEN = (0, 255, 0)  # Xanh cho trạng thái bật
+        self.WALL_COLOR = (33, 33, 222)  # Màu tường chính
+        self.WALL_HIGHLIGHT = (82, 130, 255)  # Viền tường hiệu ứng 3D
+        self.DOT_GLOW = (255, 255, 200)  # Phát sáng hạt
 
         # Load ghost images
         self.load_ghost_images()
 
-        # Game state
+        # Trạng thái game
         self.running = True
         self.game_state = "playing"  # playing, paused, game_over, level_complete
         self.score = 0
-        self.high_score = 0  # Track highest score
+        self.high_score = 0  # Theo dõi điểm cao nhất
         self.lives = 3
         self.level = 1
         
-        # Game tracking variables for statistics
-        self.start_time = pygame.time.get_ticks()  # Track game start time
-        self.last_death_cause = None  # Track what caused the last death
-        self.initial_dots = []  # Will be set after dots are placed
-        self.game_over_message = None  # Store random motivational message once
+        # Biến thống kê trạng thái trận
+        self.start_time = pygame.time.get_ticks()  # Mốc thời gian bắt đầu
+        self.last_death_cause = None  # Nguyên nhân lần chết gần nhất
+        self.initial_dots = []  # Sẽ set sau khi đặt hạt
+        self.game_over_message = None  # Lưu thông điệp động lực duy nhất
 
-        # Pacman properties - will be set after maze generation
-        self.pacman_pos = [14.0, 23.0]  # Temporary position, will be updated as floats
+        # Thuộc tính Pacman - sẽ được cập nhật sau khi tạo mê cung
+        self.pacman_pos = [14.0, 23.0]  # Vị trí tạm (float)
         self.pacman_direction = [0, 0]
         self.pacman_next_direction = [0, 0]
-        self.pacman_speed = config.PACMAN_LEGACY_SPEED  # Use config value
+        self.pacman_speed = config.PACMAN_LEGACY_SPEED  # Lấy từ config
         self.pacman_animation = 1
         self.pacman_mouth_open = True
-        self.pacman_mouth_cycle = 0  # For smooth mouth animation
+        self.pacman_mouth_cycle = 0  # Chu kỳ mở miệng mượt
         
-        # Power pellet animation
+        # Hiệu ứng power pellet
         self.pellet_pulse_timer = 0
         self.pellet_pulse_size = 0
 
         # Generate maze
         self.generate_level()
         
-        # Set Pacman starting position from maze start (black cell)
+        # Lấy vị trí bắt đầu Pacman từ điểm start trong mê cung (ô đen)
         start_row, start_col = self.start
-        self.pacman_pos = [float(start_col), float(start_row)]  # Convert (row,col) to [col,row] as floats
+        self.pacman_pos = [float(start_col), float(start_row)]  # Đổi (row,col) sang [col,row] dạng float
 
-        # Exit gate - opposite corner from Pacman start
+        # Cổng thoát - góc đối diện vị trí start
         self.exit_gate = self.calculate_exit_gate_position()
 
-        # Dots and pellets
+        # Hạt nhỏ và power pellet
         self.dots = []
         self.power_pellets = []
         self.place_dots_and_pellets()
 
-        # Bombs as obstacles - get from maze generator (already validated)
+        # Bom làm chướng ngại - lấy từ maze generator (đã kiểm tra hợp lệ)
         self.bombs = []
-        self.bombs_enabled = True  # Toggle bomb visibility and collision
+        self.bombs_enabled = True  # Bật/tắt hiện bom và va chạm
         self.load_bombs_from_maze_generator()
 
-        # Ghosts
+        # Ma
         self.ghosts = []
-        self.ghosts_enabled = True  # Toggle ghost visibility and collision
+        self.ghosts_enabled = True  # Bật/tắt hiện ma và va chạm
         self.create_ghosts()
 
-        # Initialize Pacman AI
+        # Khởi tạo Pacman AI
         self.pacman_ai = PacmanAI(self)
         
-        # Initialize Ghost Avoidance Visualizer
+        # Khởi tạo bộ hiển thị né ma
         try:
             self.visualizer = GhostAvoidanceVisualizer(self)
-            print("✅ Ghost Avoidance Visualizer loaded successfully")
-            print("   Press 'V' to toggle visualization")
-            print("   Press 'B' to toggle debug info")
-            print("   Press 'SHIFT+S' to save analysis report")
+            print("Tải thành công bộ hiển thị né ma")
+            print("   Nhấn 'V' để bật/tắt visualizer")
+            print("   Nhấn 'B' để bật/tắt debug")
+            print("   Nhấn 'SHIFT+S' để lưu báo cáo phân tích")
         except Exception as e:
-            print(f"⚠️  Could not load visualizer: {e}")
+            print(f"Không tải được visualizer: {e}")
             self.visualizer = None
 
-        # Auto mode for Pacman AI - ENSURE STARTS AS FALSE
+        # Chế độ tự động cho Pacman AI - đảm bảo khởi động ở FALSE
         self.auto_mode = False
         self.auto_path = []
         self.auto_target = None
 
-        # Goal-focused movement variables
+        # Biến di chuyển tập trung vào mục tiêu
         self.current_goal = None
         self.goal_locked = False
         self.goal_cooldown = 0
@@ -150,32 +208,32 @@ class PacmanGame:
         self.last_emergency_turn = 0
         self.turn_cooldown = 0
         
-        # Enhanced ghost avoidance
+        # Né ma nâng cao
         self.escape_mode = False  # Đang trong chế độ thoát hiểm
         self.escape_steps = 0     # Số bước đã di chuyển thoát hiểm
         self.min_escape_distance = 6  # Tối thiểu 6 bước trước khi quay lại
         self.original_direction = None  # Hướng đi ban đầu trước khi quay đầu
 
-        # Shortest path visualization
+        # Hiển thị đường đi ngắn nhất
         self.show_shortest_path = False
         self.shortest_path = []
         self.last_path_calculation = 0
 
-        # Game timing - FPS independent movement
-        self.target_fps = config.TARGET_FPS  # Use configurable FPS
+        # Thời gian game - di chuyển độc lập FPS
+        self.target_fps = config.TARGET_FPS  # Lấy FPS cấu hình
         self.last_update = pygame.time.get_ticks()
         self.delta_time = 0  
-        self.max_delta_time = config.MAX_DELTA_TIME  # Cap for large frame times
+        self.max_delta_time = config.MAX_DELTA_TIME  # Giới hạn khung hình lớn
         self.animation_timer = 0
         self.auto_update_timer = 0
         
-        # Performance monitoring
+        # Theo dõi hiệu năng
         self.fps_history = []
-        self.show_fps_info = False  # Toggle with F key
-        self.collision_checks_per_frame = 0  # Track collision performance
+        self.show_fps_info = False  # Bật/tắt bằng phím F
+        self.collision_checks_per_frame = 0  # Đếm kiểm tra va chạm mỗi khung
 
     def generate_level(self):
-        """Generate maze with Pacman-style layout"""
+        """Tạo mê cung bố cục kiểu Pacman"""
         max_attempts = 10
         for attempt in range(max_attempts):
             # NOTE: generate_maze() already calls generate_bomb_positions() internally
@@ -183,13 +241,13 @@ class PacmanGame:
             self.maze, self.start, self.goal = self.maze_gen.generate_maze()
             # Ensure start and goal are in good positions
             if self.validate_pacman_layout():
-                print(f"✅ Generated valid maze on attempt {attempt + 1}")
+                print(f"Tạo mê cung hợp lệ ở lần thử {attempt + 1}")
                 break
         else:
-            print("Warning: Could not generate suitable Pacman maze")
+            print("Cảnh báo: Không tạo được mê cung phù hợp cho Pacman")
 
     def validate_pacman_layout(self):
-        """Ensure maze is suitable for Pacman gameplay"""
+        """Đảm bảo mê cung phù hợp để chơi Pacman"""
         # Check if start position is valid
         start_row, start_col = self.start
         if not (0 <= start_row < self.maze_gen.height and 0 <= start_col < self.maze_gen.width):
@@ -199,43 +257,43 @@ class PacmanGame:
         return True
 
     def load_ghost_images(self):
-        """Load ghost images from public folder"""
+        """Tải ảnh ma từ thư mục public"""
         self.ghost_images = {}
         
-        # Load ghost images for each color (0-3)
-        ghost_colors = ['0', '1', '2', '3']  # red, pink, cyan, orange
+        # Tải ảnh ma cho từng màu (0-3)
+        ghost_colors = ['0', '1', '2', '3']  # đỏ, hồng, cyan, cam
         
         for i, color in enumerate(ghost_colors):
-            # Load right-facing (0) and left-facing (1) images
+            # Tải ảnh nhìn phải (0) và nhìn trái (1)
             try:
                 self.ghost_images[f'ghost{i}_right'] = pygame.image.load(f'public/ghost{color}_0.png').convert_alpha()
                 self.ghost_images[f'ghost{i}_left'] = pygame.image.load(f'public/ghost{color}_1.png').convert_alpha()
             except pygame.error as e:
-                print(f"Warning: Could not load ghost{color} images: {e}")
-                # Fallback to colored rectangles if images fail to load
+                print(f"Cảnh báo: Không tải được ảnh ghost{color}: {e}")
+                # Dùng hình chữ nhật màu làm dự phòng nếu không tải được ảnh
                 self.ghost_images[f'ghost{i}_right'] = None
                 self.ghost_images[f'ghost{i}_left'] = None
         
-        # Load scared ghost images
+        # Tải ảnh ma sợ
         try:
             self.ghost_images['ghost_scared_right'] = pygame.image.load('public/ghostScared_0.png').convert_alpha()
             self.ghost_images['ghost_scared_left'] = pygame.image.load('public/ghostScared_1.png').convert_alpha()
         except pygame.error as e:
-            print(f"Warning: Could not load scared ghost images: {e}")
+            print(f"Cảnh báo: Không tải được ảnh ma sợ: {e}")
             self.ghost_images['ghost_scared_right'] = None
             self.ghost_images['ghost_scared_left'] = None
         
-        # Load eyes images
+        # Tải ảnh mắt (khi ma bị ăn)
         try:
             self.ghost_images['eyes_right'] = pygame.image.load('public/eyes0.png').convert_alpha()
             self.ghost_images['eyes_left'] = pygame.image.load('public/eyes1.png').convert_alpha()
         except pygame.error as e:
-            print(f"Warning: Could not load eyes images: {e}")
+            print(f"Cảnh báo: Không tải được ảnh mắt ma: {e}")
             self.ghost_images['eyes_right'] = None
             self.ghost_images['eyes_left'] = None
 
     def calculate_exit_gate_position(self):
-        """Calculate the exit gate position at the opposite corner from Pacman start"""
+        """Tính vị trí cổng thoát ở góc đối diện điểm start của Pacman"""
         start_row, start_col = self.start
         
         # Calculate opposite corner
@@ -264,11 +322,11 @@ class PacmanGame:
         return best_pos
 
     def place_dots_and_pellets(self):
-        """Place dots and power pellets on the maze"""
+        """Đặt hạt và power pellet lên mê cung"""
         self.dots = []
         self.power_pellets = []
 
-        # First, collect all valid positions (open paths)
+        # Thu thập mọi vị trí hợp lệ (đường đi)
         valid_positions = []
         for y in range(self.maze_gen.height):
             for x in range(self.maze_gen.width):
@@ -277,10 +335,10 @@ class PacmanGame:
                     if not ((y, x) == self.start or (y, x) == self.goal):
                         valid_positions.append((x, y))
 
-        # Randomly select positions for power pellets with minimum distance constraint
+        # Chọn ngẫu nhiên vị trí đặt power pellet với ràng buộc khoảng cách tối thiểu
         power_pellet_positions = []
-        min_distance = 5  # Minimum distance between power pellets
-        max_pellets = 7  # Maximum number of power pellets
+        min_distance = 5  # Khoảng cách tối thiểu giữa các power pellet
+        max_pellets = 7  # Số power pellet tối đa
         attempts = 10
         max_attempts = 1000
 
@@ -293,7 +351,7 @@ class PacmanGame:
             candidate = random.choice(valid_positions)
             x, y = candidate
 
-            # Check if this position is far enough from existing power pellets
+            # Kiểm tra vị trí này có đủ xa các power pellet đã chọn không
             is_valid = True
             for px, py in power_pellet_positions:
                 distance = math.sqrt((x - px)**2 + (y - py)**2)
@@ -303,11 +361,11 @@ class PacmanGame:
 
             if is_valid:
                 power_pellet_positions.append(candidate)
-                # Remove nearby positions from valid_positions to speed up search
+                # Loại các vị trí lân cận khỏi valid_positions để tìm nhanh hơn
                 valid_positions = [pos for pos in valid_positions
                                  if math.sqrt((pos[0] - x)**2 + (pos[1] - y)**2) >= min_distance]
 
-        # Place dots and power pellets
+        # Đặt hạt và power pellet
         for y in range(self.maze_gen.height):
             for x in range(self.maze_gen.width):
                 if self.maze[y, x] == 0:  # Open path
@@ -316,42 +374,42 @@ class PacmanGame:
                     if (x, y) in power_pellet_positions:
                         self.power_pellets.append(center)
                     else:
-                        # Place regular dots everywhere except start and goal
+                        # Đặt hạt thường khắp nơi trừ start và goal
                         if not ((y, x) == self.start or (y, x) == self.goal):
                             self.dots.append(center)
         
-        # Save initial dots count for statistics
+        # Lưu số lượng hạt ban đầu để thống kê
         self.initial_dots = self.dots.copy()
 
     def load_bombs_from_maze_generator(self):
-        """Load bomb positions from maze generator - bombs are pre-validated during maze generation"""
+        """Tải vị trí bom từ maze generator - đã được kiểm tra khi tạo mê cung"""
         self.bombs = []
         
         if not hasattr(self.maze_gen, 'bomb_positions') or not self.maze_gen.bomb_positions:
-            print("⚠️  No bomb positions from maze generator")
+            print("Maze generator không trả về vị trí bom nào")
             return
         
-        print(f"\n📦 Loading {len(self.maze_gen.bomb_positions)} bombs from MazeGenerator")
+        print(f"\n Đang tải {len(self.maze_gen.bomb_positions)} bom từ MazeGenerator")
         
-        # CRITICAL: Verify maze exists and matches maze_gen
+        # QUAN TRỌNG: Xác nhận mê cung tồn tại và khớp kích thước
         if not hasattr(self, 'maze') or self.maze is None:
-            print("❌ ERROR: self.maze not initialized yet!")
+            print("ERROR: self.maze not initialized yet!")
             return
         
         if self.maze.shape != (self.maze_gen.height, self.maze_gen.width):
-            print(f"❌ ERROR: Maze dimension mismatch! self.maze={self.maze.shape} vs maze_gen=({self.maze_gen.height}, {self.maze_gen.width})")
+            print(f"LỖI: Kích thước mê cung không khớp! self.maze={self.maze.shape} vs maze_gen=({self.maze_gen.height}, {self.maze_gen.width})")
             return
         
         for row, col in self.maze_gen.bomb_positions:
             # Verify position is valid
             if not (0 <= row < self.maze_gen.height and 0 <= col < self.maze_gen.width):
-                print(f"❌ Bomb at Grid({row}, {col}) out of bounds - SKIPPED")
+                print(f"Bomb at Grid({row}, {col}) out of bounds - SKIPPED")
                 continue
             
             maze_value = self.maze[row, col]
             if maze_value != 0:
-                print(f"❌ Bomb at Grid({row}, {col}) NOT ON PATH (maze[{row},{col}]={maze_value}) - SKIPPED")
-                # This should NEVER happen if maze_generator works correctly!
+                print(f"Bomb tại Grid({row}, {col}) KHÔNG nằm trên đường đi (maze[{row},{col}]={maze_value}) - BỎ QUA")
+                # Trường hợp này không nên xảy ra nếu maze_generator đúng
                 continue
             
             # Convert grid to pixel coordinates (center of cell)
@@ -359,52 +417,49 @@ class PacmanGame:
             center_y = (row + 0.5) * self.cell_size
             
             self.bombs.append((center_x, center_y))
-            print(f"✅ Loaded bomb at Grid({row}, {col}) -> Pixel({center_x:.1f}, {center_y:.1f})")
-        
-        print(f"✅ Successfully loaded {len(self.bombs)} bombs (ALL on valid paths)\n")
 
     def place_bombs_OLD_DEPRECATED(self):
         """
-        OLD METHOD - DEPRECATED
-        This method is kept for reference but should NOT be used.
-        Use load_bombs_from_maze_generator() instead.
+        PHƯƠNG THỨC CŨ - ĐÃ NGỪNG DÙNG
+        Giữ lại để tham khảo, KHÔNG nên sử dụng.
+        Hãy dùng load_bombs_from_maze_generator() thay thế.
         """
         self.bombs = []
         
-        # Collect all valid positions (ONLY open paths) with ULTRA STRICT validation
+        # Thu thập mọi vị trí hợp lệ (CHỈ ô đi được) với kiểm tra SIÊU NGHIÊM NGẶT
         valid_positions = []
         for y in range(self.maze_gen.height):
             for x in range(self.maze_gen.width):
-                # ===== ULTRA STRICT VALIDATION =====
-                # Check 1: Must be within bounds
+                # ===== KIỂM TRA SIÊU NGHIÊM NGẶT =====
+                # Bước 1: Phải trong biên
                 if not (0 <= y < self.maze_gen.height and 0 <= x < self.maze_gen.width):
                     continue
                 
-                # Check 2: MUST be exactly 0 (path) - reject EVERYTHING else
+                # Bước 2: BẮT BUỘC là 0 (đường đi) - loại bỏ mọi giá trị khác
                 maze_value = self.maze[y, x]
                 if maze_value != 0:
                     continue  # Skip walls (1) and any other value
                 
-                # Check 3: Explicitly reject walls one more time
+                # Bước 3: Loại tường thêm một lần cho chắc
                 if maze_value == 1:
                     continue
                     
-                # Check 4: Skip start and goal positions
+                # Bước 4: Bỏ qua vị trí start và goal
                 if (y, x) == self.start or (y, x) == self.goal:
                     continue
                 
-                # Check 5: Ensure minimum distance from start and goal
+                # Bước 5: Đảm bảo cách xa start và goal tối thiểu
                 start_dist = math.sqrt((x - self.start[1])**2 + (y - self.start[0])**2)
                 goal_dist = math.sqrt((x - self.goal[1])**2 + (y - self.goal[0])**2)
                 
-                # Must be at least 5 cells away from start/goal (increased from 4)
+                # Phải cách tối thiểu 5 ô so với start/goal (tăng từ 4)
                 if start_dist <= 5 or goal_dist <= 5:
                     continue
                 
                 # Check 6: Removed - too restrictive
                 # The surrounding_walls check below is sufficient
                 
-                # Check 7: Ensure position is not adjacent to walls on all sides (avoid dead ends)
+                # Bước 7: Đảm bảo vị trí không bị tường bao quanh (tránh ngõ cụt)
                 surrounding_walls = 0
                 for dy in [-1, 0, 1]:
                     for dx in [-1, 0, 1]:
@@ -415,25 +470,25 @@ class PacmanGame:
                             if self.maze[ny, nx] == 1:  # Count walls
                                 surrounding_walls += 1
                 
-                # Reject positions surrounded by too many walls (dead ends or corners)
-                if surrounding_walls >= 6:  # If 6+ out of 8 neighbors are walls, skip
+                # Loại vị trí bị quá nhiều tường bao (ngõ cụt/góc chết)
+                if surrounding_walls >= 6:  # Nếu có 6+/8 ô xung quanh là tường thì bỏ
                     continue
                 
-                # FINAL CHECK: Verify this is definitely a path (0)
+                # KIỂM TRA CUỐI: Chắc chắn đây là đường đi (0)
                 if self.maze[y, x] == 0:
-                    valid_positions.append((y, x))  # Store as (row, col) for consistency
+                    valid_positions.append((y, x))  # Lưu dạng (row, col)
 
         print(f"Tìm được {len(valid_positions)} vị trí hợp lệ để đặt bom (chỉ trên đường đi)")
 
         if not valid_positions:
-            print("⚠️  Không thể đặt bom nào - không có vị trí hợp lệ!")
+            print("Không thể đặt bom nào - không có vị trí hợp lệ!")
             return
 
         # Thuật toán đặt bom với kiểm tra pathfinding nghiêm ngặt
         # Giảm số bom tối đa xuống 3 để tránh chặn đường
         bomb_positions = self.place_bombs_with_pathfinding_check(valid_positions, max_bombs=3)
         
-        print(f"\n📍 Đặt thành công {len(bomb_positions)} quả bom (đảm bảo luôn có đường đi)\n")
+        print(f"\n Đặt thành công {len(bomb_positions)} quả bom (đảm bảo luôn có đường đi)\n")
 
         # Place bombs at selected positions - with FINAL ULTRA STRICT validation
         valid_bomb_count = 0
@@ -441,7 +496,7 @@ class PacmanGame:
             # ===== FINAL ULTRA STRICT VALIDATION =====
             # Check 1: Verify bounds
             if not (0 <= row < self.maze_gen.height and 0 <= col < self.maze_gen.width):
-                print(f"❌ WARNING: Bom vượt biên giới tại Grid({row}, {col}) - BỎ QUA")
+                print(f"WARNING: Bom vượt biên giới tại Grid({row}, {col}) - BỎ QUA")
                 continue
             
             # Check 2: Get maze value ONCE to avoid multiple array accesses
@@ -449,12 +504,12 @@ class PacmanGame:
             
             # Check 3: MUST be exactly 0 (path) - reject EVERYTHING else
             if maze_value != 0:
-                print(f"❌ WARNING: Cố gắng đặt bom trên TƯỜNG tại Grid({row}, {col}) - Giá trị: {maze_value} - BỎ QUA")
+                print(f"WARNING: Cố gắng đặt bom trên TƯỜNG tại Grid({row}, {col}) - Giá trị: {maze_value} - BỎ QUA")
                 continue
             
             # Check 4: Explicitly reject walls (redundant but safe)
             if maze_value == 1:
-                print(f"❌ WARNING: Vị trí Grid({row}, {col}) là TƯỜNG (giá trị 1) - BỎ QUA")
+                print(f"WARNING: Vị trí Grid({row}, {col}) là TƯỜNG (giá trị 1) - BỎ QUA")
                 continue
             
             # Check 5: FINAL verification - must be path (0)
@@ -467,18 +522,18 @@ class PacmanGame:
                 
                 self.bombs.append(center)
                 valid_bomb_count += 1
-                print(f"✅ Đặt bom thành công tại Grid({row}, {col}) -> Pixel({center_x:.1f}, {center_y:.1f}) - Maze[{row},{col}]={maze_value}")
+                print(f"Đặt bom thành công tại Grid({row}, {col}) -> Pixel({center_x:.1f}, {center_y:.1f}) - Maze[{row},{col}]={maze_value}")
             else:
-                print(f"❌ WARNING: Không thể xác nhận Grid({row}, {col}) là đường đi - Giá trị: {maze_value} - BỎ QUA")
+                print(f"WARNING: Không thể xác nhận Grid({row}, {col}) là đường đi - Giá trị: {maze_value} - BỎ QUA")
         
-        print(f"✅ Đặt được {valid_bomb_count}/{len(bomb_positions)} quả bom hợp lệ trên đường đi")
+        print(f"Đặt được {valid_bomb_count}/{len(bomb_positions)} quả bom hợp lệ trên đường đi")
         
         # Debug: Verify all bombs are on paths
         self.verify_bomb_placement()
 
     def verify_bomb_placement(self):
         """Debug function to verify all bombs are placed correctly on paths"""
-        print("\n=== 🔍 KIỂM TRA CHI TIẾT VỊ TRÍ BOM ===")
+        print("\n===  KIỂM TRA CHI TIẾT VỊ TRÍ BOM ===")
         errors_found = 0
         
         for i, bomb in enumerate(self.bombs):
@@ -489,7 +544,7 @@ class PacmanGame:
             
             # Check bounds
             if not (0 <= grid_row < self.maze_gen.height and 0 <= grid_col < self.maze_gen.width):
-                print(f"❌ BOM {i+1}: VƯỢT BIÊN GIỚI! Grid({grid_row}, {grid_col}) - Pixel{bomb}")
+                print(f"BOM {i+1}: VƯỢT BIÊN GIỚI! Grid({grid_row}, {grid_col}) - Pixel{bomb}")
                 errors_found += 1
                 continue
             
@@ -498,13 +553,13 @@ class PacmanGame:
             
             # Verify this is a path (0)
             if maze_value == 0:
-                print(f"✅ BOM {i+1}: OK - Đặt trên đường đi Grid(row={grid_row}, col={grid_col}) - Pixel{bomb} - Maze[{grid_row},{grid_col}]={maze_value}")
+                print(f"BOM {i+1}: OK - Đặt trên đường đi Grid(row={grid_row}, col={grid_col}) - Pixel{bomb} - Maze[{grid_row},{grid_col}]={maze_value}")
             else:
-                print(f"❌❌❌ BOM {i+1}: LỖI NGHIÊM TRỌNG! Đặt trên TƯỜNG Grid(row={grid_row}, col={grid_col}) - Pixel{bomb} - Maze[{grid_row},{grid_col}]={maze_value}")
+                print(f"BOM {i+1}: LỖI NGHIÊM TRỌNG! Đặt trên TƯỜNG Grid(row={grid_row}, col={grid_col}) - Pixel{bomb} - Maze[{grid_row},{grid_col}]={maze_value}")
                 errors_found += 1
         
-        print(f"\n📊 Tổng số bom: {len(self.bombs)}")
-        print(f"{'✅ Tất cả bom đặt đúng!' if errors_found == 0 else f'❌ Phát hiện {errors_found} lỗi!'}")
+        print(f"\n Tổng số bom: {len(self.bombs)}")
+        print(f"{'Tất cả bom đặt đúng!' if errors_found == 0 else f'Phát hiện {errors_found} lỗi!'}")
         print("=" * 45 + "\n")
 
     def place_bombs_with_pathfinding_check(self, valid_positions, max_bombs=3):
@@ -516,10 +571,10 @@ class PacmanGame:
         # Kiểm tra đường đi ban đầu MULTIPLE TIMES để đảm bảo
         initial_path, initial_distance = self.dijkstra.shortest_path(self.start, self.goal)
         if not initial_path:
-            print("❌ CRITICAL: Không có đường đi ban đầu từ start đến goal!")
+            print("CRITICAL: Không có đường đi ban đầu từ start đến goal!")
             return []
         
-        print(f"📍 Đường đi ban đầu: {initial_distance} bước")
+        print(f" Đường đi ban đầu: {initial_distance} bước")
         
         # Track failed positions to avoid retrying
         failed_positions = set()
@@ -604,14 +659,14 @@ class PacmanGame:
             # ===== FINAL VERIFICATION =====
             if self.maze[row, col] == 0:
                 selected_bombs.append((row, col))
-                print(f"✅ Đặt bom #{len(selected_bombs)} tại Grid({row}, {col}) - Path: {distance} bước")
+                print(f"Đặt bom #{len(selected_bombs)} tại Grid({row}, {col}) - Path: {distance} bước")
                 
                 # Double-check path still exists after adding
                 verify_path, _ = self.dijkstra.shortest_path_with_obstacles(
                     self.start, self.goal, set(selected_bombs)
                 )
                 if not verify_path:
-                    print(f"❌ ROLLBACK: Bom tại Grid({row}, {col}) chặn đường!")
+                    print(f"ROLLBACK: Bom tại Grid({row}, {col}) chặn đường!")
                     selected_bombs.remove((row, col))
                     failed_positions.add(bomb_pos)
             else:
@@ -623,9 +678,9 @@ class PacmanGame:
                 self.start, self.goal, set(selected_bombs)
             )
             if not final_path:
-                print("❌ CRITICAL: Final check failed - clearing all bombs!")
+                print("CRITICAL: Final check failed - clearing all bombs!")
                 return []
-            print(f"✅ Final verification: Path exists ({final_dist} bước)")
+            print(f"Final verification: Path exists ({final_dist} bước)")
         
         return selected_bombs
 
@@ -682,13 +737,13 @@ class PacmanGame:
         return selected
 
     def count_adjacent_walls(self, y, x):
-        """Count number of walls adjacent to position (y,x)"""
-        directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # Up, Down, Left, Right
+        """Đếm số tường kề vị trí (y,x)"""
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # Lên, Xuống, Trái, Phải
         wall_count = 0
         for dy, dx in directions:
             ny, nx = y + dy, x + dx
             if 0 <= ny < self.maze_gen.height and 0 <= nx < self.maze_gen.width:
-                if self.maze[ny, nx] == 1:  # Wall
+                if self.maze[ny, nx] == 1:  # Tường
                     wall_count += 1
             else:
                 # Đếm biên mê cung như tường
@@ -696,17 +751,17 @@ class PacmanGame:
         return wall_count
 
     def is_not_adjacent_to_wall(self, y, x):
-        """Check if position (y,x) is not adjacent to any wall"""
-        directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # Up, Down, Left, Right
+        """Kiểm tra vị trí (y,x) không kề tường"""
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # Lên, Xuống, Trái, Phải
         for dy, dx in directions:
             ny, nx = y + dy, x + dx
             if 0 <= ny < self.maze_gen.height and 0 <= nx < self.maze_gen.width:
-                if self.maze[ny, nx] == 1:  # Wall
+                if self.maze[ny, nx] == 1:  # Tường
                     return False
         return True
 
     def is_at_least_distance_from_wall(self, y, x, min_distance=1):
-        """Check if position (y,x) is at least min_distance away from any wall"""
+        """Kiểm tra vị trí (y,x) cách tường tối thiểu min_distance"""
         for check_y in range(max(0, y - min_distance), min(self.maze_gen.height, y + min_distance + 1)):
             for check_x in range(max(0, x - min_distance), min(self.maze_gen.width, x + min_distance + 1)):
                 if self.maze[check_y, check_x] == 1:  # Tìm thấy tường trong phạm vi
@@ -714,7 +769,7 @@ class PacmanGame:
         return True
 
     def select_positions_with_min_distance(self, positions, min_distance=10, max_bombs=5):
-        """Select positions ensuring minimum distance between them"""
+        """Chọn vị trí đảm bảo khoảng cách tối thiểu giữa các bom"""
         selected = []
         for pos in random.sample(positions, len(positions)):  # Shuffle to randomize
             if len(selected) >= max_bombs:
@@ -724,21 +779,21 @@ class PacmanGame:
         return selected
 
     def create_ghosts(self):
-        """Create exactly 4 ghosts with different colors and behaviors"""
-        # Clear existing ghosts first to prevent duplication
+        """Tạo đúng 4 con ma với màu và hành vi khác nhau"""
+        # Xóa danh sách hiện tại để tránh trùng
         self.ghosts = []
         
         ghost_colors = [self.RED, self.PINK, self.CYAN, self.ORANGE, self.YELLOW, self.BLUE]
         ghost_names = ["Blinky", "Pinky", "Inky", "Clyde"]
 
-        # Find a valid starting position near the center
+        # Tìm vị trí bắt đầu hợp lệ gần trung tâm
         center_row = self.maze_gen.height // 2
         center_col = self.maze_gen.width // 2
         
-        # Search for valid positions around center
+        # Tìm vị trí hợp lệ xung quanh trung tâm
         ghost_start_pos = self.find_valid_ghost_start_position(center_row, center_col)
         
-        # Create exactly 4 ghosts starting from valid center position
+        # Tạo đúng 4 con ma xuất phát từ vị trí trung tâm hợp lệ
         for i in range(4):
             color = ghost_colors[i]
             name = ghost_names[i]
@@ -767,14 +822,14 @@ class PacmanGame:
             self.ghosts.append(ghost)
 
     def find_valid_ghost_start_position(self, center_row, center_col):
-        """Find a valid starting position for ghosts near the center"""
-        # First, check if center itself is valid
+        """Tìm vị trí xuất phát hợp lệ cho ma gần trung tâm"""
+        # Kiểm tra trung tâm có hợp lệ không
         if (0 <= center_row < self.maze_gen.height and 
             0 <= center_col < self.maze_gen.width and
             self.maze[center_row, center_col] == 0):  # Valid path
             return (center_row, center_col)
         
-        # Search in expanding circles around center
+        # Quét theo vòng tròn giãn dần quanh trung tâm
         for radius in range(1, min(self.maze_gen.height, self.maze_gen.width) // 2):
             for dr in range(-radius, radius + 1):
                 for dc in range(-radius, radius + 1):
@@ -1062,8 +1117,13 @@ class PacmanGame:
             
             # Select appropriate image
             if ghost.get('scared', False):
-                # Use scared ghost image
-                image_key = 'ghost_scared_right' if facing_right else 'ghost_scared_left'
+                # Blink when scared is about to expire
+                blink_threshold = getattr(config, 'SCARED_BLINK_THRESHOLD_FRAMES', 120)
+                should_blink = ghost.get('scared_timer', 0) <= blink_threshold and (pygame.time.get_ticks() // 150) % 2 == 0
+                if should_blink:
+                    image_key = f'ghost{ghost_index}_right' if facing_right else f'ghost{ghost_index}_left'
+                else:
+                    image_key = 'ghost_scared_right' if facing_right else 'ghost_scared_left'
             else:
                 # Use normal ghost image
                 image_key = f'ghost{ghost_index}_right' if facing_right else f'ghost{ghost_index}_left'
@@ -1173,7 +1233,7 @@ class PacmanGame:
         
         # FIXED POSITION: Always at bottom, never moves
         # This ensures stable UI regardless of FPS or Visualizer state
-        panel_y = self.screen_height - 320  # 320px from bottom (fixed)
+        panel_y = self.screen_height - 360  # Raise panel 40px to avoid clipping
         
         panel_width = 360
         
@@ -1219,41 +1279,41 @@ class PacmanGame:
             self.screen.blit(desc_text, (panel_x + 45, y))
             y += line_height
         
-        # Status indicators
+        # Các chỉ báo trạng thái
         y += 10
-        status_title = small_font.render("STATUS", True, self.CYAN)
+        status_title = small_font.render("TRẠNG THÁI", True, self.CYAN)
         self.screen.blit(status_title, (panel_x, y))
         y += 20
         
-        # Bombs status
-        bomb_status = "ON" if self.bombs_enabled else "OFF"
+        # Trạng thái bom
+        bomb_status = "BẬT" if self.bombs_enabled else "TẮT"
         bomb_color = self.RED if self.bombs_enabled else (100, 100, 100)
-        bomb_text = tiny_font.render(f"💣 Bombs: {bomb_status}", True, bomb_color)
+        bomb_text = tiny_font.render(f" Bom: {bomb_status}", True, bomb_color)
         self.screen.blit(bomb_text, (panel_x, y))
         y += line_height
         
-        # Ghosts status
-        ghost_status = "ON" if self.ghosts_enabled else "OFF"
+        # Trạng thái ma
+        ghost_status = "BẬT" if self.ghosts_enabled else "TẮT"
         ghost_color = self.PINK if self.ghosts_enabled else (100, 100, 100)
-        ghost_text = tiny_font.render(f"👻 Ghosts: {ghost_status}", True, ghost_color)
+        ghost_text = tiny_font.render(f" Ma: {ghost_status}", True, ghost_color)
         self.screen.blit(ghost_text, (panel_x, y))
         y += line_height
         
-        # Path hint status
+        # Trạng thái đường gợi ý
         if self.show_shortest_path:
             path_steps = len(self.shortest_path) - 1 if self.shortest_path else 0
-            path_text = tiny_font.render(f"📍 Path: {path_steps} steps", True, self.GREEN)
+            path_text = tiny_font.render(f" Đường: {path_steps} bước", True, self.GREEN)
             self.screen.blit(path_text, (panel_x, y))
             y += line_height
         
-        # Ghost info
+        # Thông tin ma
         if len(self.ghosts) > 0:
             ghost_modes = [f"{g['name'][:1]}:{g['mode'][:3]}" for g in self.ghosts[:2]]
-            ghost_text = tiny_font.render(f"👻 Ghosts: {' '.join(ghost_modes)}", True, self.PINK)
+            ghost_text = tiny_font.render(f" Ma: {' '.join(ghost_modes)}", True, self.PINK)
             self.screen.blit(ghost_text, (panel_x, y))
 
     def draw_fps_info(self):
-        """Draw FPS and performance information on right side (top position)"""
+        """Vẽ thông tin FPS và hiệu năng bên phải (vị trí trên)"""
         if not self.fps_history:
             return
             
@@ -1373,7 +1433,7 @@ class PacmanGame:
         
         # Title: "CONGRATULATIONS!"
         title_font = pygame.font.SysFont("arial", 36, bold=True)
-        title_text = title_font.render("CONGRATULATIONS!", True, (255, 215, 0))  # Gold
+        title_text = title_font.render("CHÚC MỪNG!", True, (255, 215, 0))  # Gold
         title_rect = title_text.get_rect(center=(box_x + box_width // 2, box_y + 40))
         self.screen.blit(title_text, title_rect)
         
@@ -1381,12 +1441,12 @@ class PacmanGame:
         score_font = pygame.font.SysFont("arial", 20, bold=True)
         
         # Current score
-        score_text = score_font.render(f"Final Score: {self.score}", True, self.WHITE)
+        score_text = score_font.render(f"Điểm cuối: {self.score}", True, self.WHITE)
         score_rect = score_text.get_rect(center=(box_x + box_width // 2, box_y + 100))
         self.screen.blit(score_text, score_rect)
         
         # Level info
-        level_text = score_font.render(f"Level {self.level} Completed", True, (0, 255, 127))  # Light blue
+        level_text = score_font.render(f"Hoàn thành Level {self.level}", True, (0, 255, 127))  # Light blue
         level_rect = level_text.get_rect(center=(box_x + box_width // 2, box_y + 160))
         self.screen.blit(level_text, level_rect)
         
@@ -1396,16 +1456,16 @@ class PacmanGame:
         
         # Instructions
         instruction_font = pygame.font.SysFont("arial", 16, bold=True)
-        next_text = instruction_font.render("Press N for Next Level", True, (144, 238, 144))  # Light green
+        next_text = instruction_font.render("Nhấn N để sang level", True, (144, 238, 144))  # Light green
         next_rect = next_text.get_rect(center=(box_x + box_width // 2, box_y + 220))
         self.screen.blit(next_text, next_rect)
         
-        restart_text = instruction_font.render("Press R to Restart", True, (255, 182, 193))  # Light pink
+        restart_text = instruction_font.render("Nhấn R để chơi lại", True, (255, 182, 193))  # Light pink
         restart_rect = restart_text.get_rect(center=(box_x + box_width // 2, box_y + 245))
         self.screen.blit(restart_text, restart_rect)
 
     def draw_game_over_notification(self):
-        """Draw a detailed game over notification box with statistics and motivational message"""
+        """Vẽ hộp thông báo game over chi tiết kèm thống kê và thông điệp động lực"""
         # Semi-transparent overlay
         overlay = pygame.Surface((self.screen_width, self.screen_height))
         overlay.set_alpha(150)  # Semi-transparent
@@ -1459,16 +1519,16 @@ class PacmanGame:
         death_color = (255, 255, 255)
         if hasattr(self, 'last_death_cause') and self.last_death_cause:
             if "Ma " in self.last_death_cause:
-                death_cause = f"👻 Bị {self.last_death_cause} Bắt"
+                death_cause = f" Bị {self.last_death_cause} Bắt"
                 death_color = (255, 182, 193)  # Light pink
             elif self.last_death_cause == "Bom nổ":
-                death_cause = "💣 Chết Vì Bom Nổ"
+                death_cause = " Chết Vì Bom Nổ"
                 death_color = (255, 140, 0)    # Dark orange
             else:
-                death_cause = f"💀 {self.last_death_cause}"
+                death_cause = f" {self.last_death_cause}"
                 death_color = (255, 99, 71)   # Tomato red
         else:
-            death_cause = "💀 Hết Mạng Sống"
+            death_cause = " Hết Mạng Sống"
             death_color = (255, 99, 71)   # Tomato red
         
         # Death cause
@@ -1479,21 +1539,21 @@ class PacmanGame:
         # Performance stats
         stats_small_font = pygame.font.SysFont("arial", 14, bold=True)
         
-        # Dots collected
+        # Số hạt đã ăn
         dots_collected = len([pos for pos in self.initial_dots if pos not in self.dots])
         total_dots = len(self.initial_dots) if hasattr(self, 'initial_dots') else len(self.dots)
-        dots_text = stats_small_font.render(f"Dots Collected: {dots_collected}/{total_dots}", True, (173, 216, 230))  # Light blue
+        dots_text = stats_small_font.render(f"Hạt đã ăn: {dots_collected}/{total_dots}", True, (173, 216, 230))  # Light blue
         dots_rect = dots_text.get_rect(center=(box_x + box_width // 2, box_y + 170))
         self.screen.blit(dots_text, dots_rect)
         
-        # Survival time (if available)
+        # Thời gian sống sót (nếu có)
         if hasattr(self, 'start_time'):
             # Use death_time if available, otherwise current time
             end_time = self.death_time if hasattr(self, 'death_time') and self.death_time else pygame.time.get_ticks()
             survival_time = (end_time - self.start_time) // 1000
             minutes = survival_time // 60
             seconds = survival_time % 60
-            time_text = stats_small_font.render(f"Survival Time: {minutes:02d}:{seconds:02d}", True, (144, 238, 144))  # Light green
+            time_text = stats_small_font.render(f"Thời gian sống sót: {minutes:02d}:{seconds:02d}", True, (144, 238, 144))  # Light green
             time_rect = time_text.get_rect(center=(box_x + box_width // 2, box_y + 195))
             self.screen.blit(time_text, time_rect)
         
@@ -1503,7 +1563,7 @@ class PacmanGame:
             motivation_msg = self.game_over_message
         else:
             # Fallback if message not set
-            motivation_msg = "🌟 Every ending is a new beginning!"
+            motivation_msg = " Mỗi kết thúc là một khởi đầu mới!"
         
         motivation_text = motivation_font.render(motivation_msg, True, (255, 223, 0))  # Gold
         motivation_rect = motivation_text.get_rect(center=(box_x + box_width // 2, box_y + 230))
@@ -1512,16 +1572,16 @@ class PacmanGame:
         # Instructions
         instruction_font = pygame.font.SysFont("arial", 16, bold=True)
         
-        restart_text = instruction_font.render("Press R to Restart Game", True, (255, 182, 193))  # Light pink
+        restart_text = instruction_font.render("Nhấn R để chơi lại", True, (255, 182, 193))  # Light pink
         restart_rect = restart_text.get_rect(center=(box_x + box_width // 2, box_y + 270))
         self.screen.blit(restart_text, restart_rect)
         
-        quit_text = instruction_font.render("Press ESC to Quit", True, (211, 211, 211))  # Light gray
+        quit_text = instruction_font.render("Nhấn ESC để thoát", True, (211, 211, 211))  # Light gray
         quit_rect = quit_text.get_rect(center=(box_x + box_width // 2, box_y + 295))
         self.screen.blit(quit_text, quit_rect)
 
     def move_pacman(self):
-        """Move Pacman with GRID-BASED movement - ONE BLOCK AT A TIME"""
+        """Di chuyển Pacman theo lưới - từng ô một"""
         # Check current position validity
         current_col, current_row = int(round(self.pacman_pos[0])), int(round(self.pacman_pos[1]))
         if not self.is_valid_position(current_col, current_row):
@@ -1552,11 +1612,11 @@ class PacmanGame:
 
             # Check if we can move to target block (allowing movement through eyes)
             if self.is_valid_position_ignore_eyes(target_col, target_row):
-                # Speed calculation - configurable dynamic speed control
+                # Tính tốc độ - có điều chỉnh tốc độ động
                 base_speed = config.PACMAN_SPEED
                 
                 if config.ENABLE_DYNAMIC_SPEED:
-                    # Calculate distance to nearest ghost
+                    # Tính khoảng cách đến con ma gần nhất
                     min_ghost_distance = float('inf')
                     for ghost in self.ghosts:
                         if not self.is_ghost_just_eyes(ghost):  # Only consider active ghosts
@@ -1565,7 +1625,7 @@ class PacmanGame:
                             distance = abs(current_row - ghost_row) + abs(current_col - ghost_col)
                             min_ghost_distance = min(min_ghost_distance, distance)
                     
-                    # Apply speed multiplier based on ghost proximity (improved values)
+                    # Áp dụng hệ số tốc độ dựa trên độ gần của ma
                     if min_ghost_distance <= 2:
                         speed_multiplier = config.DYNAMIC_SPEED_VERY_CLOSE  # Less severe slowdown
                     elif min_ghost_distance <= 4:
@@ -1847,24 +1907,28 @@ class PacmanGame:
                 if distance_to_spawn < 0.5:
                     # Ghost has returned to spawn - restore to normal state
                     ghost['eaten'] = False
+                    ghost['scared'] = False
+                    ghost['scared_timer'] = 0
                     ghost['pos'] = [float(final_target[1]), float(final_target[0])]  # (col, row)
                     # Clean up pathfinding data
                     if 'return_path' in ghost:
                         del ghost['return_path']
                     if 'path_index' in ghost:
                         del ghost['path_index']
-                    print(f"✅ {ghost.get('name', 'Ghost')} respawned at Grid({final_target[0]}, {final_target[1]})!")
+                    print(f"{ghost.get('name', 'Ghost')} respawned at Grid({final_target[0]}, {final_target[1]})!")
             else:
                 # Reached end of path
                 final_target = path[-1]
                 ghost['eaten'] = False
+                ghost['scared'] = False
+                ghost['scared_timer'] = 0
                 ghost['pos'] = [float(final_target[1]), float(final_target[0])]  # (col, row)
                 # Clean up pathfinding data
                 if 'return_path' in ghost:
                     del ghost['return_path']
                 if 'path_index' in ghost:
                     del ghost['path_index']
-                print(f"✅ {ghost.get('name', 'Ghost')} respawned at Grid({final_target[0]}, {final_target[1]})!")
+                print(f"{ghost.get('name', 'Ghost')} respawned at Grid({final_target[0]}, {final_target[1]})!")
 
     def get_smart_direction(self, ghost, valid_directions, current_pos, is_stuck):
         """Smart direction selection that reduces oscillation and improves flow"""
@@ -2424,7 +2488,7 @@ class PacmanGame:
         pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
         pacman_pos = (pacman_row, pacman_col)
 
-        # Get bomb positions - MUST ALWAYS AVOID (only if bombs enabled)
+        # Lấy vị trí bom - LUÔN phải tránh (khi bom bật)
         bomb_grid = self.get_bomb_grid_positions() if self.bombs_enabled else set()
         
         # Lấy vị trí ma để tránh - chỉ ma không scared
@@ -2441,16 +2505,16 @@ class PacmanGame:
                 
                 if path and distance < float('inf'):
                     self.auto_path = path
-                    # print(f"✓ Path found: {len(path)-1} steps (avoiding bombs + ghosts)")
+                    # print(f"Path found: {len(path)-1} steps (avoiding bombs + ghosts)")
                     return
 
         except AttributeError:
             # Function doesn't exist yet, continue to fallback
             pass
         except Exception as e:
-            print(f"Path with ghost avoidance failed: {e}")
+            print(f"Lỗi tìm đường (tránh ma): {e}")
 
-        # METHOD 2 (Fallback): Path avoiding ONLY bombs (ghost avoidance might be impossible)
+        # PHƯƠNG ÁN 2 (dự phòng): Chỉ tránh bom (có thể không tránh được ma)
         try:
             path, distance = self.dijkstra.shortest_path_with_bomb_avoidance(
                 pacman_pos, self.auto_target, bomb_grid, enable_logging=False
@@ -2458,14 +2522,14 @@ class PacmanGame:
             if path and distance < float('inf'):
                 self.auto_path = path
                 # if ghost_positions:
-                #     print(f"⚠️  Path found: {len(path)-1} steps (avoiding bombs only, ghosts may be on path)")
-                # else: print(f"✓ Path found: {len(path)-1} steps (avoiding bombs)")
+                #     print(f"Path found: {len(path)-1} steps (avoiding bombs only, ghosts may be on path)")
+                # else: print(f"Path found: {len(path)-1} steps (avoiding bombs)")
                 return
             else:
                 self.auto_path = []
-                # print(f"🚫 No path to target (bombs blocking)")
+                # print(f" No path to target (bombs blocking)")
         except Exception as e:
-            print(f"💥 Path calculation error: {e}")
+            print(f" Lỗi tính đường đi: {e}")
             self.auto_path = []
 
     def calculate_shortest_path_to_goal(self):
@@ -2476,7 +2540,7 @@ class PacmanGame:
         pacman_col, pacman_row = int(round(self.pacman_pos[0])), int(round(self.pacman_pos[1]))
         pacman_pos = (pacman_row, pacman_col)
         
-        # Get bomb positions in grid coordinates
+        # Lấy vị trí bom theo toạ độ lưới
         bomb_grid = self.get_bomb_grid_positions()
         
         # Kiểm tra tình trạng bom chặn đường trước khi tính toán
@@ -2500,7 +2564,7 @@ class PacmanGame:
                 # Rate limit warning (only print every 2 seconds)
                 if bomb_grid:
                     if not hasattr(self, '_last_bomb_path_warning') or pygame.time.get_ticks() - self._last_bomb_path_warning > 2000:
-                        print("🚫 Bom chặn đường đến mục tiêu!")
+                        print(" Bom chặn đường đến mục tiêu!")
                         self._last_bomb_path_warning = pygame.time.get_ticks()
         except Exception as e:
             self.shortest_path = []
@@ -2513,11 +2577,11 @@ class PacmanGame:
         # Target là exit gate (goal chính của game)
         exit_goal = self.goal if hasattr(self, 'goal') else None
         if not exit_goal:
-            print("No exit gate found!")
+            print("Không tìm thấy cổng thoát!")
             self.shortest_path = []
             return
         
-        # Get bomb positions in grid coordinates
+        # Lấy vị trí bom theo toạ độ lưới
         bomb_grid = self.get_bomb_grid_positions()
         
         # Kiểm tra bomb blockage cho đường đến exit gate
@@ -2536,7 +2600,7 @@ class PacmanGame:
             else:
                 self.shortest_path = []
                 if bomb_grid:
-                    print("🚫 Exit gate bị cô lập!")
+                    print(" Exit gate bị cô lập!")
         except Exception as e:
             self.shortest_path = []
 
@@ -2563,7 +2627,7 @@ class PacmanGame:
             pygame.draw.circle(self.screen, (0, 128, 0), goal_center, 6)
 
     def _evaluate_path_safety(self, path, ghost_positions, avoidance_radius):
-        """Evaluate if a path is safe from ghosts"""
+        """Đánh giá đường đi có an toàn khỏi ma không"""
         if not path or not ghost_positions:
             return True
         
@@ -2582,12 +2646,12 @@ class PacmanGame:
             if min_distance <= avoidance_radius:
                 danger_count += 1
         
-        # Path is safe if less than threshold fraction of positions are dangerous
+        # Đường đi an toàn nếu tỉ lệ ô nguy hiểm thấp hơn ngưỡng
         safety_threshold = getattr(config, 'SAFETY_DANGER_THRESHOLD', 0.2)
         return (danger_count / total_positions) < safety_threshold
 
     def _calculate_path_safety_penalty(self, path, ghost_positions, avoidance_radius):
-        """Calculate safety penalty for a path (higher = more dangerous)"""
+        """Tính điểm phạt an toàn cho đường đi (cao hơn = nguy hiểm hơn)"""
         if not path or not ghost_positions:
             return 0
         
@@ -2747,7 +2811,7 @@ class PacmanGame:
                     self.last_ai_call = current_time  # Update AI call time
                     return  # AI has handled the situation
             except Exception as e:
-                print(f"❌ AI error: {e}")
+                print(f"AI error: {e}")
                 # Fall back to simple emergency logic below
         
         # EMERGENCY FALLBACK - Simple emergency stop for critical proximity (≤ 1 cell)
@@ -2792,11 +2856,11 @@ class PacmanGame:
                     best_escape = direction
             
             if best_escape:
-                print(f"🚨 EMERGENCY: {len(critical_ghosts)} ma va chạm, thoát ngay!")
+                print(f" EMERGENCY: {len(critical_ghosts)} ma va chạm, thoát ngay!")
                 self.pacman_next_direction = best_escape
                 return
             else:
-                print("🚨 EMERGENCY: Không tìm được lối thoát!")
+                print(" EMERGENCY: Không tìm được lối thoát!")
                 return
 
         # Khởi tạo biến cho hệ thống né ma cải tiến
@@ -2962,7 +3026,7 @@ class PacmanGame:
                 self.pacman_ai.escape_steps += 1
                 self.pacman_ai.escape_last_pos = [self.pacman_pos[0], self.pacman_pos[1]]
                 # Debug: confirm movement
-                # print(f"  📍 Escape step {self.pacman_ai.escape_steps}: {last_pos} → {current_pos}")
+                # print(f"   Escape step {self.pacman_ai.escape_steps}: {last_pos} → {current_pos}")
             
             # Giảm thời gian escape để Pacman không bị kẹt lâu
             max_escape_steps = getattr(self.pacman_ai, 'min_escape_distance', 3)  # Mặc định 3 bước
@@ -2974,7 +3038,7 @@ class PacmanGame:
             
             # QUAN TRỌNG: Thoát khẩn cấp nếu bị kẹt (không di chuyển được sau 600ms)
             if time_in_escape > 600 and self.pacman_ai.escape_steps < 2:
-                print(f"⚠️ Escape mode bị kẹt! Chỉ đi được {self.pacman_ai.escape_steps} bước sau {time_in_escape}ms - Thoát ngay!")
+                print(f"Escape mode bị kẹt! Chỉ đi được {self.pacman_ai.escape_steps} bước sau {time_in_escape}ms - Thoát ngay!")
                 self.pacman_ai.escape_mode = False
                 self.pacman_ai.escape_steps = 0
                 self.goal_locked = False
@@ -3037,7 +3101,7 @@ class PacmanGame:
                     # Nếu escape direction hướng về phía ghost -> đổi hướng!
                     if (escape_dir[0] * dx > 0) or (escape_dir[1] * dy > 0):
                         if dist <= 4:  # Ghost trong 4 ô và đang chạy về phía nó
-                            print(f"⚠️ ESCAPE DIRECTION TOWARDS GHOST! Dist: {dist} - Re-evaluating...")
+                            print(f"ESCAPE DIRECTION TOWARDS GHOST! Dist: {dist} - Re-evaluating...")
                             # Cancel escape và tìm hướng mới
                             self.pacman_ai.escape_mode = False
                             self.pacman_ai.escape_steps = 0
@@ -3069,12 +3133,12 @@ class PacmanGame:
             
             # Nếu đang escape mode và va chạm sắp xảy ra -> đổi hướng escape ngay!
             if getattr(self.pacman_ai, 'escape_mode', False):
-                print(f"⚡ COLLISION DURING ESCAPE in {collision_step} steps! Closing: {closing_speed} - Changing direction!")
+                print(f"COLLISION DURING ESCAPE in {collision_step} steps! Closing: {closing_speed} - Changing direction!")
                 # Huỷ escape hiện tại và tìm hướng mới
                 self.pacman_ai.escape_mode = False
                 self.pacman_ai.escape_commit_duration = 0
                 
-            print(f"⚡ IMMINENT COLLISION DETECTED in {collision_step} steps! Closing speed: {closing_speed}")
+            print(f"IMMINENT COLLISION DETECTED in {collision_step} steps! Closing speed: {closing_speed}")
             # Force emergency avoidance ngay lập tức
             ghost_pos = collision_info['ghost_future_pos']
             emergency_ghosts = [(ghost_pos, collision_step)]
@@ -3087,7 +3151,7 @@ class PacmanGame:
             
             # NẾU MA ĐẾN GẦN TRONG LÚC COOLDOWN -> Cancel cooldown và né ngay!
             if min_distance <= 4 and getattr(self.pacman_ai, 'post_escape_cooldown', False):
-                print(f"⚠️ Ghost detected during cooldown! Distance: {min_distance} - Canceling cooldown!")
+                print(f"Ghost detected during cooldown! Distance: {min_distance} - Canceling cooldown!")
                 self.pacman_ai.force_end_cooldown()
             
             # PRIORITY 1: Emergency avoidance khi ghost gần (trong 5 ô) - tăng từ 4 lên 5
@@ -3105,7 +3169,7 @@ class PacmanGame:
                                           if not g.get('scared', False)]
 
                         # Chỉ in log khi kích hoạt lần đầu
-                        print("🚨 Tránh ma!")
+                        print(" Tránh ma!")
                         self.pacman_ai.find_fallback_target(pacman_pos, ghost_positions)
                     
                     # Giảm tần suất update để tránh lag và spam
@@ -3164,7 +3228,6 @@ class PacmanGame:
                     safe_direction = self.pacman_ai.get_post_escape_direction()
                     if safe_direction:
                         self.pacman_next_direction = list(safe_direction)
-                        return  # KHÔNG cho phép tính đường mới!
             # else: Đã an toàn, cho phép tiếp tục logic bình thường
         
         # === SAFE_RETURN STATE CHECK ===
@@ -3281,7 +3344,7 @@ class PacmanGame:
                     'speed': 1  # Assume 1 block per step
                 })
         
-        # Try multiple pathfinding strategies, ordered by safety preference
+        # Thử nhiều chiến lược tìm đường, ưu tiên độ an toàn
         strategies = [
             ("max_safety", 8),    # Maximum avoidance radius
             ("moderate_safety", 6), # Moderate avoidance  
@@ -3300,29 +3363,29 @@ class PacmanGame:
                 )
                 
                 if path and len(path) > 1:
-                    # ADDITIONAL SAFETY CHECK: Validate path doesn't go through predicted ghost positions
+                    # KIỂM TRA AN TOÀN BỔ SUNG: Đảm bảo đường không đi qua vị trí ma được dự đoán
                     if self._validate_path_against_predicted_ghosts(path, ghost_data):
                         self.auto_path = path
                         self.auto_target = goal_pos
-                        print(f"✅ {strategy_name}: {len(path)} bước")
+                        print(f"{strategy_name}: {len(path)} bước")
                         return True
                     else:
-                        print(f"❌ {strategy_name} bị ma chặn")
+                        print(f"{strategy_name} bị ma chặn")
                         continue
                         
             except Exception as e:
                 print(f"Lỗi với chiến lược {strategy_name}: {e}")
                 continue
         
-        print("❌ Không tìm được đường an toàn")
+        print("Không tìm được đường an toàn")
         return False
     
     def _validate_path_against_predicted_ghosts(self, path, ghost_data):
-        """Validate that path doesn't intersect with predicted ghost movements"""
+        """Xác nhận đường đi không cắt qua vị trí ma dự đoán"""
         if not path or len(path) <= 1:
             return False
             
-        # Predict ghost positions for next few steps
+        # Dự đoán vị trí ma trong vài bước tới
         max_prediction_steps = min(10, len(path))
         
         for step in range(max_prediction_steps):
@@ -3331,26 +3394,26 @@ class PacmanGame:
                 
             path_pos = path[step]
             
-            # Check against each ghost's predicted position at this step
+            # So khớp với vị trí ma được dự đoán tại bước này
             for ghost in ghost_data:
                 ghost_pos = ghost['pos']
                 ghost_dir = ghost['direction']
                 ghost_speed = ghost['speed']
                 
-                # Predict ghost position at this step
+                # Dự đoán vị trí ma ở bước này
                 predicted_ghost_row = ghost_pos[0] + (ghost_dir[1] * step * ghost_speed)
                 predicted_ghost_col = ghost_pos[1] + (ghost_dir[0] * step * ghost_speed)
                 predicted_ghost_pos = (predicted_ghost_row, predicted_ghost_col)
                 
-                # Check if path position conflicts with predicted ghost position
+                # Kiểm tra xung đột giữa đường đi và vị trí ma dự đoán
                 if path_pos == predicted_ghost_pos:
-                    print(f"⚠️  Path position {path_pos} conflicts with predicted ghost at step {step}")
+                    print(f"Path position {path_pos} conflicts with predicted ghost at step {step}")
                     return False
                 
                 # Check if too close (adjacent)
                 distance = abs(path_pos[0] - predicted_ghost_pos[0]) + abs(path_pos[1] - predicted_ghost_pos[1])
                 if distance <= 1:
-                    print(f"⚠️  Path too close to predicted ghost at step {step}: distance {distance}")
+                    print(f"Path too close to predicted ghost at step {step}: distance {distance}")
                     return False
         
         return True
@@ -3396,7 +3459,7 @@ class PacmanGame:
             # print(f" GOAL-ONLY: Center goal at {self.current_goal}")
         else:
             self.current_goal = None
-            # print(" GOAL-ONLY: No valid goal found")
+            # print(" GOAL-ONLY: Không tìm thấy goal hợp lệ")
 
     def move_goal_focused(self):
         """GOAL-FOCUSED movement - Chỉ tập trung vào goal, không ăn dots ngẫu nhiên"""
@@ -3460,7 +3523,7 @@ class PacmanGame:
             self.emergency_goal_move(pacman_col, pacman_row, goal_col, goal_row)
 
     def find_goal_path(self, start_pos, goal_pos):
-        """GOAL-ONLY pathfinding - tối ưu cho việc đi đến goal"""
+        """Dò đường chỉ cho mục tiêu (goal), tối ưu để đến đích"""
         import heapq
 
         start = (int(start_pos[0]), int(start_pos[1]))
@@ -3470,7 +3533,7 @@ class PacmanGame:
             return None
 
         def heuristic(pos):
-            """Manhattan distance - khuyến khích đi thẳng đến goal"""
+            """Khoảng cách Manhattan - khuyến khích đi thẳng tới goal"""
             return abs(pos[0] - goal[0]) + abs(pos[1] - goal[1])
 
         # A* algorithm với goal priority
@@ -3478,7 +3541,7 @@ class PacmanGame:
         visited = set()
         directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
         
-        # Get bomb positions ONCE before the loop (optimization)
+            # Lấy vị trí bom một lần trước vòng lặp (tối ưu)
         bomb_grid = self.get_bomb_grid_positions()
 
         while heap:
@@ -3492,11 +3555,11 @@ class PacmanGame:
                 nx, ny = x + dx, y + dy
 
                 if (nx, ny) == goal:
-                    # GOAL FOUND - return first step
+                    # TÌM THẤY GOAL - trả về bước đầu tiên
                     first_step = path[0] if path else (dx, dy)
                     return [first_step[0], first_step[1]]
 
-                # Check if position is valid and doesn't have bomb
+                # Kiểm tra vị trí hợp lệ và không có bom
                 if (nx, ny) not in visited and self.is_valid_position(nx, ny) and (ny, nx) not in bomb_grid:
                     new_g_score = g_score + 1
                     new_f_score = new_g_score + heuristic((nx, ny))
@@ -3507,11 +3570,11 @@ class PacmanGame:
         return None
 
     def emergency_goal_move(self, px, py, gx, gy):
-        """Emergency movement trực tiếp đến goal"""
+        """Di chuyển khẩn cấp trực tiếp tới goal"""
         dx = 1 if gx > px else (-1 if gx < px else 0)
         dy = 1 if gy > py else (-1 if gy < py else 0)
 
-        # Get bomb positions
+        # Lấy vị trí bom
         bomb_grid = self.get_bomb_grid_positions()
 
         # Thử hướng chính trước
@@ -3530,19 +3593,19 @@ class PacmanGame:
             self.pacman_next_direction = [0, dx]
             return
 
-        # Last resort: bất kỳ hướng nào
+        # Phương án cuối: bất kỳ hướng hợp lệ nào
         for test_dir in [[1,0], [-1,0], [0,1], [0,-1]]:
             if self.is_valid_position(px + test_dir[0], py + test_dir[1]) and (py + test_dir[1], px + test_dir[0]) not in bomb_grid:
                 self.pacman_next_direction = test_dir
                 return
 
     def find_simple_goal(self):
-        """Find closest goal and stick to it - CHỈ TÌM EXIT GATE"""
+        """Tìm goal gần nhất và bám theo (CHỈ exit gate)"""
         pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
 
         if hasattr(self, 'exit_gate') and self.exit_gate:
             self.current_goal = self.exit_gate
-            print(f"Exit Gate: {self.exit_gate}")
+            print(f"Cổng thoát: {self.exit_gate}")
         else:
             self.current_goal = None
             print("Không có exit gate")
@@ -3619,7 +3682,7 @@ class PacmanGame:
         return None  # Không thể di chuyển
 
     def move_directly_toward_goal(self):
-        """Move toward goal using BFS pathfinding"""
+        """Di chuyển tới goal bằng BFS"""
         if not self.current_goal:
             return
             
@@ -3656,7 +3719,7 @@ class PacmanGame:
                     break
 
     def calculate_path_to_goal(self):
-        """Calculate shortest path to current goal"""
+        """Tính đường ngắn nhất tới goal hiện tại"""
         if not self.current_goal:
             return
             
@@ -3668,20 +3731,20 @@ class PacmanGame:
             self.path_to_goal = path
             # print(f"Path calculated: {len(path)} steps to goal {self.current_goal}")  # Reduced verbosity
         else:
-            # print(" No path to goal found")  # Reduced verbosity
+            # print(" Không tìm thấy đường tới goal")  # Giảm log
             self.path_to_goal = []
             # If no path found, invalidate current goal
             self.current_goal = None
 
     def find_safe_detour(self):
-        """Find safe route when ghost is near"""
+        """Tìm lối vòng an toàn khi có ma gần"""
         pacman_col, pacman_row = int(self.pacman_pos[0]), int(self.pacman_pos[1])
         
         # Get ghost positions
         ghost_positions = [(int(g['pos'][1]), int(g['pos'][0])) for g in self.ghosts 
                           if not g.get('scared', False)]
         
-        # Find safe directions (away from ghosts)
+        # Tìm hướng an toàn (tránh xa ma)
         safe_directions = []
         for dx, dy in [[1, 0], [-1, 0], [0, 1], [0, -1]]:
             new_col = pacman_col + dx
@@ -3700,7 +3763,7 @@ class PacmanGame:
                         goal_distance = abs(new_row - self.current_goal[0]) + abs(new_col - self.current_goal[1])
                         safe_directions.append((dx, dy, goal_distance))
         
-        # Choose direction that's safe and closest to goal
+        # Chọn hướng an toàn và gần goal nhất
         if safe_directions:
             safe_directions.sort(key=lambda x: x[2])  # Sort by distance to goal
             chosen_direction = safe_directions[0][:2]
@@ -3712,12 +3775,12 @@ class PacmanGame:
             print("Không tìm được hướng an toàn!")
 
     def move_toward_goal(self):
-        """Move toward current goal using calculated path"""
+        """Đi tới goal hiện tại theo đường đã tính"""
         if not self.path_to_goal or len(self.path_to_goal) <= 1:
             print("Không có đường - đứng im")
             return
         
-        # Clean up path - remove current position if we're already there
+        # Dọn đường đi - bỏ waypoint hiện tại nếu đã đến
         current_col, current_row = int(round(self.pacman_pos[0])), int(round(self.pacman_pos[1]))
         
         # Remove waypoints that we've already reached
@@ -3732,7 +3795,7 @@ class PacmanGame:
             # print("Goal reached!")  # Reduced verbosity
             return
             
-        # Get next target position from path
+        # Lấy điểm đích tiếp theo trên đường
         next_row, next_col = self.path_to_goal[0]  # Always use first position in path
         
         # print(f"Current: ({current_row}, {current_col}) → Target: ({next_row}, {next_col})")  # Reduced verbosity
@@ -3741,7 +3804,7 @@ class PacmanGame:
         dx = next_col - current_col  
         dy = next_row - current_row  
         
-        # Simple direction logic - move one step at a time
+        # Logic hướng đơn giản - đi từng bước
         direction = [0, 0]
         if dy > 0:      # Need to go down
             direction = [0, 1]
@@ -3776,43 +3839,57 @@ class PacmanGame:
         return False
 
     def has_reached_target(self):
-        """Check if Pacman has reached the current auto target"""
+        """Kiểm tra Pacman đã tới auto target hiện tại chưa"""
         if not self.auto_target:
             return True
 
         pacman_col, pacman_row = self.pacman_pos[0], self.pacman_pos[1]
         target_row, target_col = self.auto_target
 
-        # Note: auto_target is in (row, col) format, pacman_pos is in [col, row] format
+        # Lưu ý: auto_target dạng (row, col), pacman_pos dạng [col, row]
         return abs(pacman_col - target_col) < 1 and abs(pacman_row - target_row) < 1
 
     def is_wall(self, col, row):
-        """Check if position is a wall - STRICT VERSION"""
-        # Ensure coordinates are within bounds
+        """Kiểm tra vị trí có phải tường (phiên bản nghiêm ngặt)"""
+        # Đảm bảo toạ độ trong biên
         if not (0 <= row < self.maze_gen.height and 0 <= col < self.maze_gen.width):
             return True  # Out of bounds = wall
         
-        # Check if it's actually a wall (blue cell)
+        # Kiểm tra có phải tường (ô xanh)
         return self.maze[row, col] == 1
     
     def is_valid_position(self, col, row):
-        """Check if position is valid for movement (black cell only)"""
-        # Convert float to int for checking
+        """Kiểm tra vị trí hợp lệ để di chuyển (chỉ ô đen)"""
+        # Đổi float sang int để kiểm tra
         check_col, check_row = int(round(col)), int(round(row))
         
-        # Must be within bounds
+        # Phải trong biên
         if not (0 <= check_row < self.maze_gen.height and 0 <= check_col < self.maze_gen.width):
             return False
             
-        # Must be open path (black cell, not blue wall)
+        # Phải là ô đường đi (ô đen, không phải tường xanh)
         return self.maze[check_row, check_col] == 0
 
     def can_pacman_pass_through_ghost(self, ghost):
         """
         Kiểm tra Pacman có thể đi xuyên qua ghost không
-        Trả về True nếu ghost đã bị ăn (chỉ còn eyes)
+        Trả về True nếu ghost đã bị ăn (eyes) HOẶC đang sợ và còn nhiều thời gian sợ
         """
-        return ghost.get('eaten', False)
+        if ghost.get('eaten', False):
+            return True
+
+        if ghost.get('scared', False):
+            blink_threshold = getattr(config, 'SCARED_BLINK_THRESHOLD_FRAMES', 120)
+            return ghost.get('scared_timer', 0) > blink_threshold
+
+        return False
+
+    def is_scared_expiring(self, ghost):
+        """Trả về True nếu ghost đang sợ nhưng gần hết thời gian sợ (cần né lại)."""
+        if not ghost.get('scared', False):
+            return False
+        blink_threshold = getattr(config, 'SCARED_BLINK_THRESHOLD_FRAMES', 120)
+        return ghost.get('scared_timer', 0) <= blink_threshold
 
     def is_ghost_just_eyes(self, ghost):
         """
@@ -3849,82 +3926,82 @@ class PacmanGame:
         return True
 
     def check_collisions(self):
-        """Optimized collision detection with spatial partitioning"""
-        # Get Pacman's grid position (rounded to nearest cell)
+        """Phát hiện va chạm tối ưu với phân vùng lưới"""
+        # Lấy vị trí Pacman trên lưới (làm tròn về ô gần nhất)
         pacman_grid_col = int(round(self.pacman_pos[0]))
         pacman_grid_row = int(round(self.pacman_pos[1]))
         
-        # Also get pixel position for distance-based checks
+        # Đồng thời lấy toạ độ pixel để đo khoảng cách
         pacman_center = (self.pacman_pos[0] * self.cell_size + self.cell_size // 2,
                         self.pacman_pos[1] * self.cell_size + self.cell_size // 2)
 
-        # OPTIMIZED: Only check dots within reasonable distance (2 cells = 60 pixels)
+        # TỐI ƯU: Chỉ kiểm tra hạt trong khoảng cách hợp lý (2 ô ≈ 60px)
         max_check_distance = config.COLLISION_CHECK_DISTANCE if hasattr(config, 'COLLISION_CHECK_DISTANCE') else 60
         
-        # Reset collision counter
+        # Đặt lại bộ đếm va chạm
         self.collision_checks_per_frame = 0
         
-        # Check dots with improved grid-based detection
+        # Kiểm tra hạt với phát hiện dựa trên lưới
         for dot in self.dots[:]:
-            # Calculate dot's grid position from pixel position
+            # Tính vị trí hạt trên lưới từ toạ độ pixel
             dot_grid_col = int(dot[0] / self.cell_size)
             dot_grid_row = int(dot[1] / self.cell_size)
             
-            # Check if Pacman is in the same grid cell or very close
+            # Kiểm tra Pacman cùng ô hoặc lân cận
             grid_distance = abs(pacman_grid_col - dot_grid_col) + abs(pacman_grid_row - dot_grid_row)
             
             # If in same cell or adjacent cell, do precise check
             if grid_distance <= 1:
-                # Quick distance check first (cheaper than hypot)
+                # Ưu tiên kiểm tra khoảng cách nhanh (rẻ hơn hypot)
                 dx = abs(pacman_center[0] - dot[0])
                 dy = abs(pacman_center[1] - dot[1])
                 
-                # Only count if we actually do the expensive calculation
+                # Chỉ tăng đếm khi thực hiện phép tính tốn kém
                 self.collision_checks_per_frame += 1
                     
-                # Increased detection radius from 10 to 15 for better pickup
+                # Tăng bán kính phát hiện từ 10 lên 15 để ăn hạt tốt hơn
                 distance = math.hypot(dx, dy)
                 if distance < 15:
                     self.dots.remove(dot)
                     self.score += 10
 
-        # Check power pellets with same optimization
+        # Kiểm tra power pellet với tối ưu tương tự
         for pellet in self.power_pellets[:]:
-            # Calculate pellet's grid position from pixel position
+            # Tính vị trí pellet trên lưới từ toạ độ pixel
             pellet_grid_col = int(pellet[0] / self.cell_size)
             pellet_grid_row = int(pellet[1] / self.cell_size)
             
-            # Check if Pacman is in the same grid cell or very close
+            # Kiểm tra Pacman cùng ô hoặc lân cận
             grid_distance = abs(pacman_grid_col - pellet_grid_col) + abs(pacman_grid_row - pellet_grid_row)
             
-            # If in same cell or adjacent cell, do precise check
+            # Nếu cùng/giáp ô thì kiểm tra kỹ
             if grid_distance <= 1:
-                # Quick distance check first
+                # Ưu tiên kiểm tra nhanh
                 dx = abs(pacman_center[0] - pellet[0])
                 dy = abs(pacman_center[1] - pellet[1])
                 
-                # Only count if we actually do the expensive calculation
+                # Chỉ tăng đếm khi tính toán tốn kém
                 self.collision_checks_per_frame += 1
                     
-                # Increased detection radius from 10 to 15 for better pickup
+                # Tăng bán kính phát hiện từ 10 lên 15 để ăn pellet tốt hơn
                 distance = math.hypot(dx, dy)
                 if distance < 15:
                     self.power_pellets.remove(pellet)
                     self.score += 50
 
-                # Play wakawaka sound for power pellet
-                if hasattr(self, 'wakawaka_sound') and self.wakawaka_sound:
-                    self.wakawaka_sound.play()
+                    # Phát âm thanh wakawaka khi ăn power pellet
+                    if hasattr(self, 'play_wakawaka'):
+                        self.play_wakawaka()
 
-                # Set power mode for 10 seconds
-                self.power_mode_end_time = pygame.time.get_ticks() + 5000  # 10 seconds
+                    # Kích hoạt power mode
+                    self.power_mode_end_time = pygame.time.get_ticks() + 5000  # 5 seconds
 
-                # Make all ghosts frightened for 10 seconds
-                for ghost in self.ghosts:
-                    ghost['scared'] = True
-                    ghost['scared_timer'] = 600  # 10 seconds at 60 FPS
+                    # Làm toàn bộ ma sợ
+                    for ghost in self.ghosts:
+                        ghost['scared'] = True
+                        ghost['scared_timer'] = 600  # 10 seconds at 60 FPS
 
-        # Check bombs collision - lose life if hit (only if bombs enabled)
+        # Kiểm tra va chạm bom - dính bom mất mạng (chỉ khi bật bom)
         if self.bombs_enabled:
             for bomb in self.bombs[:]:
                 distance = math.hypot(pacman_center[0] - bomb[0], pacman_center[1] - bomb[1])
@@ -3941,22 +4018,22 @@ class PacmanGame:
                         # Set motivational message only once when game over
                         if not self.game_over_message:
                             motivational_messages = [
-                                "🌟 Đừng bỏ cuộc, hãy thử lại!",
-                                "💪 Thất bại là mẹ của thành công!",
-                                "🎯 Lần sau sẽ tốt hơn!",
-                                "🚀 Hãy học hỏi và phát triển!",
-                                "✨ Every ending is a new beginning!",
-                                "🔥 Persistence beats resistance!",
-                                "🌈 The comeback is always stronger!",
-                                "⭐ You're closer than you think!"
+                                " Đừng bỏ cuộc, hãy thử lại!",
+                                " Thất bại là mẹ của thành công!",
+                                " Lần sau sẽ tốt hơn!",
+                                " Hãy học hỏi và phát triển!",
+                                "✨ Mỗi kết thúc là một khởi đầu mới!",
+                                " Kiên trì sẽ vượt mọi trở ngại!",
+                                " Màn trở lại luôn mạnh mẽ hơn!",
+                                "⭐ Bạn gần thành công hơn bạn nghĩ!"
                             ]
                             self.game_over_message = random.choice(motivational_messages)
                     else:
                         self.reset_positions()
                     break  # Only lose one life per collision check
 
-        # CHỈ KIỂM TRA: Ghosts collision - IMPROVED with larger detection radius
-        # Skip ghost collision if ghosts are disabled
+        # CHỈ KIỂM TRA: Va chạm với ma - tăng bán kính phát hiện
+        # Bỏ qua kiểm tra khi tắt ma
         if self.ghosts_enabled:
             for ghost in self.ghosts:
                 # Skip if ghost is already eaten in this frame
@@ -3972,11 +4049,7 @@ class PacmanGame:
                     if ghost.get('scared', False):
                         # Eat scared ghost for points
                         self.score += 200
-                        print(f"Ate {ghost['name']} ghost! +200 points")
-                        
-                        # Play wakawaka sound for eating ghost
-                        if hasattr(self, 'wakawaka_sound') and self.wakawaka_sound:
-                            self.wakawaka_sound.play()
+                        print(f"Ăn ma {ghost['name']}! +200 điểm")
                         
                         # Set ghost to eaten state (only eyes visible)
                         ghost['eaten'] = True
@@ -4003,16 +4076,16 @@ class PacmanGame:
                             self.goal_locked = True
                             print(f"→ Tìm goal mới sau khi ăn ma: {self.current_goal}")
                         
-                        # Ghost will move back to spawn as eyes
-                        # IMPORTANT: Break after eating one ghost to avoid multiple collisions in same frame
+                        # Ma sẽ quay về spawn dưới dạng mắt
+                        # LƯU Ý: Break sau khi ăn một con để tránh nhiều va chạm trong cùng frame
                         break
                     else:
-                        # Normal ghost collision - lose life but keep score
-                        print(f"Pacman touched a normal ghost! Lost a life. Lives remaining: {self.lives - 1}")
+                        # Va chạm ma thường - mất mạng nhưng giữ điểm
+                        print(f"Pacman chạm ma thường! Mất 1 mạng. Còn lại: {self.lives - 1}")
                         self.lives -= 1
                         self.last_death_cause = f"Ma {ghost['name']}"  # Track death cause with ghost name
                         
-                        # Log death to visualizer
+                        # Ghi log lần chết vào visualizer
                         if self.visualizer and hasattr(self, 'pacman_ai'):
                             try:
                                 ghost_data = self.visualizer._collect_ghost_data()
@@ -4024,30 +4097,30 @@ class PacmanGame:
                         if self.lives <= 0:
                             self.death_time = pygame.time.get_ticks()  # Save death time
                             self.game_state = "game_over"
-                            print("Game Over! No lives remaining.")
+                            print("Game Over! Hết mạng.")
                             # Update high score
                             if self.score > self.high_score:
                                 self.high_score = self.score
                             # Set motivational message only once when game over
                             if not self.game_over_message:
                                 motivational_messages = [
-                                    "🌟 Đừng bỏ cuộc, hãy thử lại!",
-                                    "💪 Thất bại là mẹ của thành công!",
-                                    "🎯 Lần sau sẽ tốt hơn!",
-                                    "🚀 Hãy học hỏi và phát triển!",
-                                    "✨ Every ending is a new beginning!",
-                                    "🔥 Persistence beats resistance!",
-                                    "🌈 The comeback is always stronger!",
-                                    "⭐ You're closer than you think!"
+                                    " Đừng bỏ cuộc, hãy thử lại!",
+                                    " Thất bại là mẹ của thành công!",
+                                    " Lần sau sẽ tốt hơn!",
+                                    " Hãy học hỏi và phát triển!",
+                                    "✨ Mỗi kết thúc là một khởi đầu mới!",
+                                    " Kiên trì sẽ vượt mọi trở ngại!",
+                                    " Màn trở lại luôn mạnh mẽ hơn!",
+                                    "⭐ Bạn gần thành công hơn bạn nghĩ!"
                                 ]
                                 self.game_over_message = random.choice(motivational_messages)
                         else:
                             # Reset positions but keep score and game state
                             self.reset_positions_after_death()
-                        # IMPORTANT: Break after losing life to avoid multiple deaths in same frame
+                        # LƯU Ý: Break sau khi mất mạng để tránh chết nhiều lần trong cùng frame
                         break
 
-        # Check exit gate collision (WIN CONDITION)
+        # Kiểm tra va chạm cổng thoát (điều kiện thắng)
         if hasattr(self, 'exit_gate'):
             gate_row, gate_col = self.exit_gate
             gate_center = ((gate_col + 0.5) * self.cell_size, (gate_row + 0.5) * self.cell_size)
@@ -4057,7 +4130,7 @@ class PacmanGame:
                 self.game_state = "level_complete"
                 self.score += 1000  # Bonus for completing level
 
-        # Check win condition
+        # Kiểm tra điều kiện thắng
         if not self.dots and not self.power_pellets:
             self.level += 1
             self.generate_level()
@@ -4065,8 +4138,8 @@ class PacmanGame:
             self.reset_positions()
 
     def reset_positions(self):
-        """Reset Pacman and ghosts to starting positions - ghosts placed randomly and far from Pacman"""
-        # Set Pacman to maze start position (guaranteed black cell)
+        """Đặt lại vị trí Pacman và ma về điểm xuất phát - ma đặt ngẫu nhiên và cách xa Pacman"""
+        # Đặt Pacman về vị trí start của mê cung (ô đen đảm bảo hợp lệ)
         start_row, start_col = self.start
         self.pacman_pos = [float(start_col), float(start_row)]  # Convert (row,col) to [col,row] as floats
         self.pacman_direction = [0, 0]
@@ -4074,9 +4147,9 @@ class PacmanGame:
         self.auto_path = []
         self.auto_target = None
         
-        # Verify Pacman position is valid
+        # Kiểm tra vị trí Pacman có hợp lệ
         if not self.is_valid_position(self.pacman_pos[0], self.pacman_pos[1]):
-            # Find first valid position
+            # Tìm vị trí hợp lệ đầu tiên
             for row in range(self.maze_gen.height):
                 for col in range(self.maze_gen.width):
                     if self.is_valid_position(col, row):
@@ -4085,14 +4158,14 @@ class PacmanGame:
                 if self.is_valid_position(self.pacman_pos[0], self.pacman_pos[1]):
                     break
 
-        # Find all valid positions for ghosts
+        # Tìm tất cả vị trí hợp lệ cho ma
         all_valid_positions = []
         for row in range(self.maze_gen.height):
             for col in range(self.maze_gen.width):
                 if self.is_valid_position(col, row):
-                    all_valid_positions.append([float(col), float(row)])  # Store as floats
+                    all_valid_positions.append([float(col), float(row)])  # Lưu dưới dạng float
         
-        # Filter positions that are far from Pacman (minimum distance = 8 cells)
+        # Lọc các vị trí đủ xa Pacman (tối thiểu 8 ô)
         min_distance_from_pacman = 8
         safe_positions = []
         
@@ -4101,32 +4174,32 @@ class PacmanGame:
             if distance >= min_distance_from_pacman:
                 safe_positions.append(pos)
         
-        # If not enough safe positions, use all valid positions but sort by distance
+        # Nếu không đủ vị trí an toàn, dùng toàn bộ vị trí hợp lệ nhưng sắp xếp theo khoảng cách
         if len(safe_positions) < 4:
             # Sort by distance from Pacman (farthest first)
             all_valid_positions.sort(key=lambda pos: abs(pos[0] - self.pacman_pos[0]) + abs(pos[1] - self.pacman_pos[1]), reverse=True)
             safe_positions = all_valid_positions
         
-        # Randomly shuffle safe positions
+        # Xáo trộn ngẫu nhiên các vị trí an toàn
         random.shuffle(safe_positions)
         
-        # Place ghosts at valid center position and let them spread out
+        # Đặt ma tại vị trí trung tâm hợp lệ và để chúng tản ra
         center_row = self.maze_gen.height // 2
         center_col = self.maze_gen.width // 2
         ghost_start_pos = self.find_valid_ghost_start_position(center_row, center_col)
 
         # If can't find valid ghost position, use Pacman's position as fallback
         if not ghost_start_pos:
-            print(" Could not find valid ghost start position, using Pacman position")
+            print(" Không tìm được vị trí bắt đầu hợp lệ cho ma, dùng vị trí Pacman")
             ghost_start_pos = (int(self.pacman_pos[1]), int(self.pacman_pos[0]))
 
         for i, ghost in enumerate(self.ghosts[:4]):  # Ensure only 4 ghosts
             # All ghosts start at the same valid center position
             ghost['pos'] = [float(ghost_start_pos[1]), float(ghost_start_pos[0])]  # [col, row] format
 
-            # Reset ghost state
+            # Đặt lại trạng thái của ma
             ghost['direction'] = [0, 0]
-            ghost['mode'] = 'random'  # Start in random mode to spread out
+            ghost['mode'] = 'random'  # Bắt đầu ở mode ngẫu nhiên để tản ra
             ghost['target'] = None
             ghost['last_direction_change'] = 0
             ghost['position_history'] = []
@@ -4136,8 +4209,8 @@ class PacmanGame:
             ghost['spread_timer'] = 0
 
     def reset_positions_after_death(self):
-        """Reset Pacman and ghosts positions after death - keeps score and game state intact"""
-        print("Resetting positions after death...")
+        """Đặt lại vị trí Pacman và ma sau khi chết - giữ nguyên điểm và trạng thái"""
+        print("Đang đặt lại vị trí sau khi chết...")
 
         # Set Pacman to maze start position (guaranteed black cell)
         start_row, start_col = self.start
@@ -4149,7 +4222,7 @@ class PacmanGame:
         if hasattr(self, 'pacman_ai'):
             self.pacman_ai.reset()
 
-        # Reset auto mode variables but keep auto mode enabled if it was on
+        # Đặt lại biến auto mode nhưng vẫn giữ auto nếu đang bật
         if self.auto_mode:
             self.auto_path = []
             self.auto_target = None
@@ -4158,7 +4231,7 @@ class PacmanGame:
             self.goal_cooldown = 0
             self.ghost_avoidance_active = False
 
-        # Verify Pacman position is valid
+        # Kiểm tra vị trí Pacman có hợp lệ
         if not self.is_valid_position(self.pacman_pos[0], self.pacman_pos[1]):
             # Find first valid position
             for row in range(self.maze_gen.height):
@@ -4169,14 +4242,14 @@ class PacmanGame:
                 if self.is_valid_position(self.pacman_pos[0], self.pacman_pos[1]):
                     break
 
-        # Find all valid positions for ghosts
+        # Tìm tất cả vị trí hợp lệ cho ma
         all_valid_positions = []
         for row in range(self.maze_gen.height):
             for col in range(self.maze_gen.width):
                 if self.is_valid_position(col, row):
-                    all_valid_positions.append([float(col), float(row)])  # Store as floats
+                    all_valid_positions.append([float(col), float(row)])  # Lưu dưới dạng float
 
-        # Filter positions that are far from Pacman (minimum distance = 8 cells)
+        # Lọc các vị trí đủ xa Pacman (khoảng cách tối thiểu = 8 ô)
         min_distance_from_pacman = 8
         safe_positions = []
 
@@ -4185,32 +4258,32 @@ class PacmanGame:
             if distance >= min_distance_from_pacman:
                 safe_positions.append(pos)
 
-        # If not enough safe positions, use all valid positions but sort by distance
+        # Nếu không đủ vị trí an toàn, dùng toàn bộ vị trí hợp lệ nhưng sắp xếp theo khoảng cách
         if len(safe_positions) < 4:
             # Sort by distance from Pacman (farthest first)
             all_valid_positions.sort(key=lambda pos: abs(pos[0] - self.pacman_pos[0]) + abs(pos[1] - self.pacman_pos[1]), reverse=True)
             safe_positions = all_valid_positions
 
-        # Randomly shuffle safe positions
+        # Xáo trộn ngẫu nhiên các vị trí an toàn
         random.shuffle(safe_positions)
 
-        # Place ghosts at valid center position and let them spread out
+        # Đặt ma tại vị trí trung tâm hợp lệ và để chúng tản ra
         center_row = self.maze_gen.height // 2
         center_col = self.maze_gen.width // 2
         ghost_start_pos = self.find_valid_ghost_start_position(center_row, center_col)
 
-        # If can't find valid ghost position, use Pacman's position as fallback
+        # Nếu không tìm được vị trí hợp lệ cho ma, dùng vị trí của Pacman
         if not ghost_start_pos:
-            print(" Could not find valid ghost start position, using Pacman position")
+            print(" Không tìm được vị trí bắt đầu hợp lệ cho ma, dùng vị trí Pacman")
             ghost_start_pos = (int(self.pacman_pos[1]), int(self.pacman_pos[0]))
 
         for i, ghost in enumerate(self.ghosts[:4]):  # Ensure only 4 ghosts
             # All ghosts start at the same valid center position
             ghost['pos'] = [float(ghost_start_pos[1]), float(ghost_start_pos[0])]  # [col, row] format
 
-            # Reset ghost state
+            # Đặt lại trạng thái của ma
             ghost['direction'] = [0, 0]
-            ghost['mode'] = 'random'  # Start in random mode to spread out
+            ghost['mode'] = 'random'  # Bắt đầu ở mode ngẫu nhiên để tản ra
             ghost['target'] = None
             ghost['last_direction_change'] = 0
             ghost['position_history'] = []
@@ -4218,19 +4291,19 @@ class PacmanGame:
             ghost['last_position'] = None
             ghost['random_timer'] = 0
             ghost['spread_timer'] = 0
-            # Keep scared state intact if ghost was scared
+            # Giữ nguyên trạng thái sợ nếu ma đang sợ
             if not ghost.get('scared', False):
                 ghost['scared_timer'] = 0
 
-        print(f"Positions reset - Pacman at start, ghosts repositioned. Score: {self.score}, Lives: {self.lives}")
+        print(f"Đặt lại vị trí - Pacman về điểm start, ma được xếp lại. Điểm: {self.score}, Mạng: {self.lives}")
 
     def handle_events(self):
-        """Handle user input"""
+        """Xử lý input từ người chơi"""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
             elif event.type == pygame.KEYDOWN:
-                # print(f"Key pressed: {pygame.key.name(event.key)}")
+                # print(f"Phím bấm: {pygame.key.name(event.key)}")
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
                 
@@ -4239,19 +4312,19 @@ class PacmanGame:
                     if self.visualizer:
                         self.visualizer.toggle_visualization()
                     else:
-                        print("⚠️  Visualizer not available")
+                        print("Không có visualizer")
                 
                 elif event.key == pygame.K_b:
                     if self.visualizer:
                         self.visualizer.print_real_time_analysis()
                     else:
-                        print("⚠️  Visualizer not available")
+                        print("Không có visualizer")
                 
                 elif event.key == pygame.K_s and pygame.key.get_mods() & pygame.KMOD_SHIFT:
                     if self.visualizer:
                         self.visualizer.save_analysis_report()
                     else:
-                        print("⚠️  Visualizer not available")
+                        print("Không có visualizer")
                 
                 elif event.key == pygame.K_p:
                     self.game_state = "paused" if self.game_state == "playing" else "playing"
@@ -4262,25 +4335,25 @@ class PacmanGame:
                     if self.show_shortest_path:
                         # Luôn hiển thị đường đi đến EXIT GATE (goal chính)
                         self.calculate_hint_path_to_exit()
-                        # print("Hint path to EXIT: ON (Press H to toggle)")
+                        # print("Đường gợi ý đến EXIT: BẬT (nhấn H để tắt)")
                     else:
                         self.shortest_path = []
                         # print("Hint path visualization: OFF")
                 elif event.key == pygame.K_f:
                     self.show_fps_info = not self.show_fps_info
-                    print(f"FPS info: {'ON' if self.show_fps_info else 'OFF'}")
+                    print(f"Thông tin FPS: {'BẬT' if self.show_fps_info else 'TẮT'}")
                 elif event.key == pygame.K_x:
                     self.bombs_enabled = not self.bombs_enabled
                     status = "ON" if self.bombs_enabled else "OFF"
-                    print(f"💣 Bombs: {status}")
+                    print(f" Bom: {status}")
                 elif event.key == pygame.K_g:
                     self.ghosts_enabled = not self.ghosts_enabled
                     status = "ON" if self.ghosts_enabled else "OFF"
-                    print(f"👻 Ghosts: {status}")
+                    print(f" Ma: {status}")
                 elif event.key == pygame.K_d:
                     config.ENABLE_DYNAMIC_SPEED = not config.ENABLE_DYNAMIC_SPEED
                     status = "ON" if config.ENABLE_DYNAMIC_SPEED else "OFF"
-                    print(f"Dynamic speed control: {status}")
+                    print(f"Điều chỉnh tốc độ động: {status}")
                 elif event.key == pygame.K_e:
                     self.pacman_ai.set_escape_target()
                 elif event.key == pygame.K_r:
@@ -4298,8 +4371,8 @@ class PacmanGame:
                         self.pacman_next_direction = [1, 0]
 
     def restart_game(self):
-        """Restart the entire game while maintaining exactly 4 ghosts"""
-        print("RESTARTING GAME - Resetting all states...")
+        """Khởi động lại toàn bộ game, giữ đúng 4 con ma"""
+        print("ĐANG KHỞI ĐỘNG LẠI GAME - Đặt lại toàn bộ trạng thái...")
 
         self.score = 0
         self.lives = 3
@@ -4313,12 +4386,12 @@ class PacmanGame:
         if hasattr(self, 'pacman_ai'):
             self.pacman_ai.reset()
 
-        # Reset game over message for next game
+        # Đặt lại thông báo game over cho lần sau
         self.game_over_message = None
         self.last_death_cause = None
-        self.death_time = None  # Reset death time
+        self.death_time = None  # Đặt lại thời gian chết
 
-        # Remove user auto flag to ensure manual control after restart
+        # Xoá cờ auto để đảm bảo quay về điều khiển tay sau khi restart
         if hasattr(self, '_user_enabled_auto'):
             delattr(self, '_user_enabled_auto')
 
@@ -4348,41 +4421,41 @@ class PacmanGame:
         self.animation_timer = 0
         self.auto_update_timer = 0
 
-        print("Generating new level...")
+        print("Đang tạo level mới...")
         self.generate_level()
 
         if not hasattr(self, 'start') or not hasattr(self, 'goal'):
-            print("Failed to generate valid maze, trying again...")
+            print("Tạo mê cung thất bại, thử lại...")
             # Try one more time
             self.generate_level()
 
         if not hasattr(self, 'start') or not hasattr(self, 'goal'):
-            print("Still failed to generate maze, using fallback")
+            print("Vẫn thất bại khi tạo mê cung, dùng phương án dự phòng")
             # Fallback: create a simple maze
             import numpy as np
             self.maze = np.zeros((self.maze_gen.height, self.maze_gen.width), dtype=int)
             self.start = (1, 1)
             self.goal = (self.maze_gen.height - 2, self.maze_gen.width - 2)
 
-        print("Placing dots and pellets...")
+        print("Đang đặt hạt và power pellet...")
         self.place_dots_and_pellets()
         
         # Bombs are already generated in maze generation - no need to place again
-        print("Loading bombs from maze generator...")
+        print("Đang tải bom từ maze generator...")
         self.load_bombs_from_maze_generator()
 
-        print("Creating/resetting ghosts...")
+        print("Đang tạo/đặt lại ma...")
         # Always recreate ghosts to ensure clean state
         self.ghosts = []
         self.create_ghosts()
 
-        print("Resetting positions...")
+        print("Đang đặt lại vị trí...")
         self.reset_positions()
 
-        print("Game restarted successfully - Auto mode: OFF, Manual control enabled!")
+        print("Khởi động lại thành công - Auto: TẮT, điều khiển tay!")
 
     def next_level(self):
-        """Advance to the next level"""
+        """Sang level tiếp theo"""
         self.level += 1
         self.game_state = "playing"
         
@@ -4407,8 +4480,8 @@ class PacmanGame:
         self.reset_positions()
 
     def create_new_game(self):
-        """Create a new game with a randomly generated map"""
-        print("Creating a new game with a random map...")
+        """Tạo ván mới với bản đồ ngẫu nhiên"""
+        print("Đang tạo ván mới với bản đồ ngẫu nhiên...")
 
         self.score = 0
         self.lives = 3
@@ -4422,7 +4495,7 @@ class PacmanGame:
         if hasattr(self, 'pacman_ai'):
             self.pacman_ai.reset()
 
-        # Remove user auto flag to ensure manual control after creating new game
+        # Xoá cờ auto để đảm bảo điều khiển tay sau khi tạo ván mới
         if hasattr(self, '_user_enabled_auto'):
             delattr(self, '_user_enabled_auto')
 
@@ -4440,65 +4513,65 @@ class PacmanGame:
         self.goal_locked = False
         self.goal_cooldown = 0
 
-        print("Generating new random level...")
+        print("Đang tạo level ngẫu nhiên mới...")
         self.generate_level()
 
         if not hasattr(self, 'start') or not hasattr(self, 'goal'):
-            print("Failed to generate valid maze, trying again...")
+            print("Tạo mê cung thất bại, thử lại...")
             # Try one more time
             self.generate_level()
 
         if not hasattr(self, 'start') or not hasattr(self, 'goal'):
-            print("Still failed to generate maze, using fallback")
+            print("Vẫn thất bại khi tạo mê cung, dùng phương án dự phòng")
             # Fallback: create a simple maze
             import numpy as np
             self.maze = np.zeros((self.maze_gen.height, self.maze_gen.width), dtype=int)
             self.start = (1, 1)
             self.goal = (self.maze_gen.height - 2, self.maze_gen.width - 2)
 
-        print("Placing dots and pellets...")
+        print("Đang đặt hạt và power pellet...")
         self.place_dots_and_pellets()
         
         # Bombs are already generated in maze generation - no need to place again
-        print("Loading bombs from maze generator...")
+        print("Đang tải bom từ maze generator...")
         self.load_bombs_from_maze_generator()
 
-        print("Creating/resetting ghosts...")
+        print("Đang tạo/đặt lại ma...")
         # Always recreate ghosts to ensure clean state
         self.ghosts = []
         self.create_ghosts()
 
-        print("Resetting positions...")
+        print("Đang đặt lại vị trí...")
         self.reset_positions()
 
-        print("New game created successfully!")
+        print("Tạo ván mới thành công!")
 
     def update(self):
-        """Update game state with FPS-independent movement"""
+        """Cập nhật trạng thái game với chuyển động độc lập FPS"""
         current_time = pygame.time.get_ticks()
         raw_delta_time = (current_time - self.last_update) / 1000.0  # Convert to seconds
         
-        # Cap delta time to prevent huge jumps when paused/lagging
+        # Giới hạn delta time để tránh bước nhảy lớn khi pause/lag
         self.delta_time = min(raw_delta_time, self.max_delta_time)
         self.last_update = current_time
         
-        # Track FPS for performance monitoring
+        # Theo dõi FPS để giám sát hiệu năng
         if raw_delta_time > 0:
             current_fps = 1.0 / raw_delta_time
             self.fps_history.append(current_fps)
             if len(self.fps_history) > 60:  # Keep last 60 frames
                 self.fps_history.pop(0)
         
-        # Update visualizer with current AI state
+        # Cập nhật visualizer với trạng thái AI hiện tại
         if self.visualizer and hasattr(self, 'pacman_ai'):
             try:
                 self.visualizer.update(self.pacman_ai)
             except Exception as e:
                 pass  # Silent fail to not disrupt gameplay
 
-        # ENSURE AUTO MODE STAYS OFF UNLESS EXPLICITLY ENABLED BY USER
+        # ĐẢM BẢO AUTO CHỈ BẬT KHI NGƯỜI CHƠI CHỦ ĐỘNG
         if self.auto_mode and not hasattr(self, '_user_enabled_auto'):
-            print("WARNING: Auto mode was unexpectedly enabled, resetting to manual")
+            print("CẢNH BÁO: Auto bật ngoài ý muốn, chuyển về điều khiển tay")
             self.auto_mode = False
             self.auto_path = []
             self.auto_target = None
@@ -4549,8 +4622,8 @@ class PacmanGame:
                 self.pellet_pulse_timer = 0
 
     def draw_ghost_return_paths(self):
-        """Draw the return paths for eaten ghosts (eyes only)"""
-        # Skip drawing return paths if ghosts are disabled
+        """Vẽ đường quay về cho ma đã bị ăn (chỉ mắt)"""
+        # Bỏ qua nếu tắt ma
         if not self.ghosts_enabled:
             return
             
@@ -4558,15 +4631,15 @@ class PacmanGame:
             if ghost.get('eaten', False) and hasattr(ghost, 'return_path') and ghost['return_path']:
                 path = ghost['return_path']
                 
-                # Draw path with dotted white line
+                # Vẽ đường bằng chấm trắng
                 for i, (row, col) in enumerate(path):
                     center = ((col + 0.5) * self.cell_size, (row + 0.5) * self.cell_size)
                     
-                    # Draw smaller dots for ghost return path
+                    # Vẽ chấm nhỏ cho đường về của ma
                     if i % 2 == 0:  # Draw every other dot for dotted effect
                         pygame.draw.circle(self.screen, (200, 200, 200), center, 2)  # Light gray
                 
-                # Highlight current target waypoint
+                # Tô sáng waypoint mục tiêu hiện tại
                 if hasattr(ghost, 'path_index') and ghost['path_index'] < len(path):
                     target_waypoint = path[ghost['path_index']]
                     target_row, target_col = target_waypoint
@@ -4574,7 +4647,7 @@ class PacmanGame:
                     pygame.draw.circle(self.screen, (255, 255, 255), target_center, 4)  # White target
 
     def draw(self):
-        """Draw everything"""
+        """Vẽ toàn bộ khung hình"""
         self.screen.fill(self.BLACK)
         self.draw_maze()
         self.draw_dots_and_pellets()
@@ -4587,18 +4660,18 @@ class PacmanGame:
         self.draw_ghosts()
         self.draw_ui()
         
-        # Draw FPS info if enabled
+        # Vẽ thông tin FPS nếu bật
         if self.show_fps_info:
             self.draw_fps_info()
         
-        # Render visualizer overlay (if enabled)
+        # Vẽ overlay của visualizer nếu có
         if self.visualizer:
             try:
                 self.visualizer.render(self.screen, self.cell_size)
             except Exception as e:
                 pass  # Silent fail to not disrupt gameplay
         
-        # Draw game state notifications LAST (on top of everything)
+        # Vẽ thông báo trạng thái ở lớp trên cùng
         if self.game_state == "game_over":
             self.draw_game_over_notification()
         elif self.game_state == "level_complete":
@@ -4607,23 +4680,23 @@ class PacmanGame:
         pygame.display.flip()
 
     def toggle_auto_mode(self):
-        """Toggle between manual and automatic Pacman control"""
+        """Chuyển giữa điều khiển tay và tự động"""
         self.auto_mode = not self.auto_mode
         if self.auto_mode:
-            print("Auto mode ON - Pacman will play automatically!")
-            self._user_enabled_auto = True  # Mark that user explicitly enabled auto
+            print("Bật auto - Pacman sẽ tự chơi!")
+            self._user_enabled_auto = True  # Đánh dấu người chơi đã bật auto
             self.find_auto_target()
         else:
-            print("Manual mode ON - You control Pacman!")
+            print("Bật điều khiển tay - Bạn điều khiển Pacman!")
             if hasattr(self, '_user_enabled_auto'):
-                delattr(self, '_user_enabled_auto')  # Remove flag when disabling
+                delattr(self, '_user_enabled_auto')  # Xoá cờ khi tắt
             self.auto_path = []
             self.auto_target = None
             self.pacman_direction = [0, 0]
             self.pacman_next_direction = [0, 0]
 
     def run(self):
-        """Main game loop with configurable FPS"""
+        """Vòng lặp chính với FPS cấu hình"""
         try:
             while self.running:
                 self.handle_events()
@@ -4631,23 +4704,23 @@ class PacmanGame:
                 self.draw()
                 self.clock.tick(self.target_fps)  # Use configurable FPS
         except KeyboardInterrupt:
-            print("\nGame interrupted by user")
+            print("\nGame bị dừng bởi người chơi")
         except Exception as e:
-            print(f" Error during game execution: {e}")
+            print(f" Lỗi khi chạy game: {e}")
         finally:
-            # Proper cleanup
-            print("Cleaning up resources...")
+            # Dọn dẹp
+            print("Đang giải phóng tài nguyên...")
             try:
-                pygame.mixer.quit()  # Safe to call even if mixer not initialized
+                pygame.mixer.quit()  # Gọi an toàn kể cả khi mixer chưa init
             except:
                 pass
             pygame.quit()
-            print("Game exited successfully")
+            print("Thoát game thành công")
             sys.exit(0)
 
     def get_bomb_grid_positions(self):
-        """Convert bomb pixel positions to grid coordinates"""
-        # Return empty set if bombs are disabled
+        """Chuyển toạ độ pixel của bom sang ô lưới"""
+        # Trả về tập rỗng nếu tắt bom
         if not self.bombs_enabled:
             return set()
         
@@ -4665,7 +4738,7 @@ class PacmanGame:
         current_time = pygame.time.get_ticks()
         if current_time - self._last_bomb_grid_log > 5000:  # Every 5 seconds
             if bomb_grid:
-                print(f"💣 Bomb grid positions ({len(bomb_grid)}): {list(bomb_grid)[:3]}...")
+                print(f" Bomb ({len(bomb_grid)}): {list(bomb_grid)[:3]}...")
             self._last_bomb_grid_log = current_time
         
         return bomb_grid

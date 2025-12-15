@@ -158,10 +158,10 @@ class MazeGenerator:
                 valid_positions.append((row, col))
         
         if not valid_positions:
-            print("⚠️  MazeGenerator: No valid positions for bombs")
+            print("MazeGenerator: No valid positions for bombs")
             return
         
-        print(f"🎯 MazeGenerator: Found {len(valid_positions)} valid bomb positions")
+        print(f"MazeGenerator: Found {len(valid_positions)} valid bomb positions")
         
         # Step 2: Use pathfinding to select bomb positions that don't block the path
         # Import here to avoid circular dependency
@@ -172,10 +172,10 @@ class MazeGenerator:
             # Verify initial path exists
             initial_path, initial_distance = dijkstra.shortest_path(self.start, self.goal)
             if not initial_path:
-                print("❌ MazeGenerator: No path from start to goal!")
+                print("MazeGenerator: No path from start to goal!")
                 return
             
-            print(f"📍 MazeGenerator: Initial path length: {initial_distance} steps")
+            print(f"MazeGenerator: Initial path length: {initial_distance} steps")
             
             # Shuffle and try positions
             random.shuffle(valid_positions)
@@ -213,7 +213,7 @@ class MazeGenerator:
                 
                 if path and distance <= initial_distance * 1.5:
                     selected_bombs.append((row, col))
-                    print(f"✅ MazeGenerator: Bomb #{len(selected_bombs)} at Grid({row}, {col}) - Path still exists ({distance} steps)")
+                    print(f"MazeGenerator: Bomb #{len(selected_bombs)} at Grid({row}, {col}) - Path still exists ({distance} steps)")
             
             # Final verification with bomb avoidance
             if selected_bombs:
@@ -222,24 +222,24 @@ class MazeGenerator:
                 )
                 if final_path:
                     self.bomb_positions = selected_bombs
-                    print(f"✅ MazeGenerator: {len(self.bomb_positions)} bombs generated successfully")
+                    print(f"MazeGenerator: {len(self.bomb_positions)} bombs generated successfully")
                     
                     # Verify each bomb is on a path
                     for i, (row, col) in enumerate(self.bomb_positions, 1):
                         maze_value = self.maze[row, col]
                         if maze_value != 0:
-                            print(f"❌ ERROR: Bomb {i} at ({row}, {col}) is NOT on path! Maze value: {maze_value}")
+                            print(f"ERROR: Bomb {i} at ({row}, {col}) is NOT on path! Maze value: {maze_value}")
                         else:
-                            print(f"   ✓ Bomb {i}: Grid({row}, {col}) - On path (maze[{row},{col}]=0)")
+                            print(f"   Bomb {i}: Grid({row}, {col}) - On path (maze[{row},{col}]=0)")
                 else:
-                    print("❌ MazeGenerator: Final verification failed - no bombs added")
+                    print("MazeGenerator: Final verification failed - no bombs added")
                     self.bomb_positions = []
             else:
-                print("⚠️  MazeGenerator: No suitable bomb positions found")
+                print("MazeGenerator: No suitable bomb positions found")
                 
         except ImportError as e:
-            print(f"⚠️  MazeGenerator: Cannot import pathfinding, using simple placement: {e}")
+            print(f"MazeGenerator: Cannot import pathfinding, using simple placement: {e}")
             # Fallback: simple random selection
             selected = random.sample(valid_positions, min(max_bombs, len(valid_positions)))
             self.bomb_positions = selected
-            print(f"✅ MazeGenerator: {len(self.bomb_positions)} bombs placed (simple mode)")
+            print(f"MazeGenerator: {len(self.bomb_positions)} bombs placed (simple mode)")

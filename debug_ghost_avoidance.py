@@ -25,7 +25,7 @@ def test_ghost_avoidance_scenarios():
     ai = PacmanAI(game)
     
     # Check if AI has proper initialization
-    print(f"✅ AI Initialization Check:")
+    print(f"AI Initialization Check:")
     print(f"   - has escape_direction_history: {hasattr(ai, 'escape_direction_history')}")
     print(f"   - has last_escape_time: {hasattr(ai, 'last_escape_time')}")
     print(f"   - has escape_timeout_count: {hasattr(ai, 'escape_timeout_count')}")
@@ -57,7 +57,7 @@ def test_ghost_avoidance_scenarios():
     print(f"   - Escape timeout count: {ai.escape_timeout_count}")
     
     # Test forced movement
-    print(f"\n⚡ TESTING FORCED MOVEMENT:")
+    print(f"\nTESTING FORCED MOVEMENT:")
     pacman_row, pacman_col = 10, 10  # Test position
     
     # Set conditions for forced movement
@@ -103,7 +103,7 @@ def test_ghost_avoidance_scenarios():
     print(f"   - COLLISION_CHECK_DISTANCE: {getattr(config, 'COLLISION_CHECK_DISTANCE', 'Not set')}")
     
     pygame.quit()
-    print(f"\n✅ DEBUG COMPLETE")
+    print(f"\nDEBUG COMPLETE")
 
 def test_improved_logic():
     """Test with improved anti-loop logic"""
@@ -156,11 +156,11 @@ def test_improved_logic():
         
         # Recommend action
         if should_force:
-            print(f"   ⚡ RECOMMENDED: Force emergency movement")
+            print(f"   RECOMMENDED: Force emergency movement")
         elif is_loop:
             print(f"   🔄 RECOMMENDED: Clear history, extended cooldown")
         else:
-            print(f"   ✅ RECOMMENDED: Normal operation")
+            print(f"   RECOMMENDED: Normal operation")
     
     pygame.quit()
 

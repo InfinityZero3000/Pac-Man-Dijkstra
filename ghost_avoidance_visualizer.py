@@ -87,7 +87,7 @@ class GhostAvoidanceVisualizer:
         self.font_medium = pygame.font.Font(None, 24)
         self.font_large = pygame.font.Font(None, 32)
         
-        print("✅ Ghost Avoidance Visualizer initialized")
+        print("Ghost Avoidance Visualizer initialized")
         print("   Press V to toggle visualization")
         print("   Press D to toggle debug info")
         print("   Press S to save analysis report")
@@ -628,17 +628,17 @@ class GhostAvoidanceVisualizer:
         try:
             with open(filename, 'w') as f:
                 json.dump(report, f, indent=2, default=str)
-            print(f"✅ Analysis report saved to: {filename}")
+            print(f"Analysis report saved to: {filename}")
             return True
         except Exception as e:
-            print(f"❌ Error saving report: {e}")
+            print(f"Error saving report: {e}")
             return False
     
     def toggle_visualization(self):
         """Toggle visualization on/off"""
         self.enabled = not self.enabled
         status = "ENABLED" if self.enabled else "DISABLED"
-        print(f"🔄 Ghost Avoidance Visualization: {status}")
+        print(f" Ghost Avoidance Visualization: {status}")
     
     def print_real_time_analysis(self):
         """Print real-time analysis to console"""
@@ -651,11 +651,11 @@ class GhostAvoidanceVisualizer:
         
         # Pacman state
         pacman_pos = self.current_frame_data['pacman_pos']
-        print(f"\n📍 Pacman Position: {pacman_pos}")
+        print(f"\n Pacman Position: {pacman_pos}")
         
         # Ghost threats
         if 'threats' in self.current_frame_data:
-            print(f"\n👻 Active Threats: {len(self.current_frame_data['threats'])}")
+            print(f"\n Active Threats: {len(self.current_frame_data['threats'])}")
             for i, threat in enumerate(self.current_frame_data['threats'][:3]):
                 print(f"   {i+1}. Distance: {threat['distance']}, "
                       f"Score: {threat['threat_score']:.1f}, "
@@ -677,7 +677,7 @@ class GhostAvoidanceVisualizer:
                 avg_safety = sum(safety_map.values()) / len(safety_map)
                 max_safety = max(safety_map.values())
                 min_safety = min(safety_map.values())
-                print(f"\n🛡️  Safety Analysis:")
+                print(f"\n️  Safety Analysis:")
                 print(f"   Average Safety: {avg_safety:.1f}")
                 print(f"   Max Safety: {max_safety:.1f}")
                 print(f"   Min Safety: {min_safety:.1f}")
@@ -694,7 +694,7 @@ if __name__ == "__main__":
     ║   Công cụ debug và phân tích AI ghost avoidance         ║
     ╚══════════════════════════════════════════════════════════╝
     
-    🎯 Features:
+     Features:
        • Real-time threat zone visualization
        • Safety score heatmap
        • Movement prediction display
@@ -702,12 +702,12 @@ if __name__ == "__main__":
        • Performance metrics
        • Decision tree analysis
        
-    🎮 Controls (when integrated):
+     Controls (when integrated):
        • V - Toggle visualization
        • D - Toggle debug info
        • S - Save analysis report
        
-    📝 Usage:
+     Usage:
        1. Import vào game chính:
           from ghost_avoidance_visualizer import GhostAvoidanceVisualizer
           visualizer = GhostAvoidanceVisualizer(game_instance)
@@ -718,7 +718,7 @@ if __name__ == "__main__":
        3. Render overlay:
           visualizer.render(screen, cell_size)
     
-    ⚠️  Note: File này cần được integrate vào pacman_game.py
+    Note: File này cần được integrate vào pacman_game.py
               để hoạt động đầy đủ. Xem hướng dẫn integrate bên dưới.
     """)
     

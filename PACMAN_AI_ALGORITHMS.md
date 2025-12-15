@@ -17,7 +17,7 @@
 ### 📖 Mô tả
 BFS là thuật toán tìm kiếm theo chiều rộng, được sử dụng để phân tích không gian di chuyển của Pacman và tìm lối thoát an toàn.
 
-### 🎯 Mục đích
+### Mục đích
 - **Flood Fill**: Tính toán tất cả các vị trí Pacman có thể đến được
 - **Movement Freedom**: Đánh giá mức độ tự do di chuyển (bị kẹt hay không)
 - **Escape Analysis**: Tìm tất cả các lối thoát khả dụng
@@ -82,7 +82,7 @@ stats = pacman_ai.get_bfs_statistics()
 ### 📖 Mô tả
 Dijkstra là thuật toán tìm đường đi ngắn nhất từ một điểm đến tất cả các điểm khác, được tối ưu hóa với ghost avoidance và bomb detection.
 
-### 🎯 Mục đích
+### Mục đích
 - Tìm đường đi ngắn nhất đến mục tiêu
 - Phát hiện bom chặn đường
 - Tính toán chi phí đường đi với ghost avoidance
@@ -122,7 +122,7 @@ enhanced_threat = pacman_ai.enhanced_check_bomb_threat_with_bfs(target_position)
 # BFS check TẤT CẢ đường đi có thể, không chỉ shortest path
 ```
 
-### 📍 Tìm fallback target an toàn
+### Tìm fallback target an toàn
 ```python
 # Khi target chính không an toàn
 pacman_pos = (10, 15)
@@ -139,7 +139,7 @@ pacman_ai.find_fallback_target(pacman_pos, ghost_positions)
 ### 📖 Mô tả
 A* là thuật toán tìm đường tối ưu sử dụng heuristic để ưu tiên các đường đi có khả năng tốt nhất.
 
-### 🎯 Mục đích
+### Mục đích
 - Tìm đường đi tối ưu nhanh hơn Dijkstra
 - Sử dụng heuristic (Manhattan distance) để định hướng tìm kiếm
 - Kết hợp với safety evaluation
@@ -154,7 +154,7 @@ A* là thuật toán tìm đường tối ưu sử dụng heuristic để ưu ti
 threat_detected, closest_threat, min_distance = pacman_ai.check_ghost_on_path_to_goal()
 
 if threat_detected:
-    print(f"⚠️  Ma phát hiện trên đường đi!")
+    print(f"Ma phát hiện trên đường đi!")
     print(f"   Vị trí ma: {closest_threat}")
     print(f"   Khoảng cách: {min_distance}")
 ```
@@ -180,7 +180,7 @@ penalty = pacman_ai.calculate_path_safety_penalty(path, ghost_positions, avoidan
 ### 📖 Mô tả
 Thuật toán Bresenham để kiểm tra đường nhìn thẳng giữa hai điểm, được sử dụng để phát hiện ma và đánh giá mối đe dọa.
 
-### 🎯 Mục đích
+### Mục đích
 - Kiểm tra xem Pacman có nhìn thấy ma không (không bị tường chặn)
 - Tăng threat score khi có line of sight
 - Hỗ trợ predictive collision detection
@@ -214,20 +214,20 @@ has_relaxed_los = pacman_ai._has_relaxed_line_of_sight(pacman_pos, ghost_pos, ma
 Pacman (P)          Ghost (G)
    |                   |
    v                   v
-   P . . . . . . . . . G    ✅ Direct LOS (cùng hàng, không tường)
+   P . . . . . . . . . G    Direct LOS (cùng hàng, không tường)
    
    P
    .
    █ (wall)
    .
-   G                        ❌ No LOS (có tường chặn)
+   G                        No LOS (có tường chặn)
    
    P
    .
    █
    .
    .
-   G                        ⚠️ Relaxed LOS (1 tường, vẫn phát hiện)
+   G                        Relaxed LOS (1 tường, vẫn phát hiện)
 ```
 
 ---
@@ -237,7 +237,7 @@ Pacman (P)          Ghost (G)
 ### 📖 Mô tả
 Hệ thống tính điểm mối đe dọa tổng hợp từ nhiều yếu tố để đánh giá mức độ nguy hiểm của ma.
 
-### 🎯 Các yếu tố tính toán
+### Các yếu tố tính toán
 
 | Yếu tố | Trọng số | Mô tả |
 |--------|----------|-------|
@@ -267,11 +267,11 @@ print(f"Threat Score: {threat_score}/100")
 if threat_score >= 80:
     print("🚨 CRITICAL - Thoát hiểm ngay lập tức!")
 elif threat_score >= 60:
-    print("⚠️  HIGH - Rẽ chiến thuật")
+    print("HIGH - Rẽ chiến thuật")
 elif threat_score >= 40:
-    print("⚡ MODERATE - Cảnh giác")
+    print("MODERATE - Cảnh giác")
 else:
-    print("✅ LOW - An toàn")
+    print("LOW - An toàn")
 ```
 
 ### 📊 Ví dụ tính toán
@@ -294,7 +294,7 @@ Total Threat Score = 55 + 30 + 25 + 10 = 120 → Capped at 100
 ### 📖 Mô tả
 Thuật toán tính điểm an toàn cho một vị trí, giúp Pacman chọn hướng thoát hiểm tốt nhất.
 
-### 🎯 Các yếu tố đánh giá
+### Các yếu tố đánh giá
 
 | Yếu tố | Điểm | Mô tả |
 |--------|------|-------|
@@ -328,14 +328,14 @@ safety_score = pacman_ai._calculate_enhanced_safety_score(
 
 print(f"Safety Score: {safety_score}")
 if safety_score > 30:
-    print("✅ An toàn - Có thể di chuyển")
+    print("An toàn - Có thể di chuyển")
 elif safety_score > 15:
-    print("⚠️  Cẩn thận - Cân nhắc")
+    print("Cẩn thận - Cân nhắc")
 else:
-    print("❌ Nguy hiểm - Tránh đi")
+    print("Nguy hiểm - Tránh đi")
 ```
 
-### 🎯 So sánh các hướng di chuyển
+### So sánh các hướng di chuyển
 
 ```python
 directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # down, up, right, left
@@ -379,7 +379,7 @@ score2 = pacman_ai._calculate_enhanced_safety_score(...)  # ~0.01ms ⚡
 ### 📖 Mô tả
 Dự đoán va chạm trong tương lai dựa trên hướng di chuyển hiện tại của Pacman và ma.
 
-### 🎯 Mục đích
+### Mục đích
 - Phát hiện collision trước 4-6 bước
 - Tránh tình huống "đi vào bẫy"
 - Tăng proactive behavior
@@ -405,7 +405,7 @@ will_collide = pacman_ai._predictive_collision_check(
 )
 
 if will_collide:
-    print("⚠️  CẢNH BÁO: Va chạm dự kiến trong 4-6 bước!")
+    print("CẢNH BÁO: Va chạm dự kiến trong 4-6 bước!")
     print("   → Nên đổi hướng ngay!")
 ```
 
@@ -436,7 +436,7 @@ prediction_steps = min(6, max(3, distance + 2))
 # distance = 8 → predict 6 steps (max)
 ```
 
-### 🎯 Các trường hợp phát hiện
+### Các trường hợp phát hiện
 
 ```python
 # Case 1: Head-on collision (đối đầu)
@@ -464,7 +464,7 @@ are_approaching = pacman_ai._are_moving_towards_each_other(
 )
 
 if are_approaching:
-    print("⚠️  Đang tiến về phía nhau - Nguy hiểm!")
+    print("Đang tiến về phía nhau - Nguy hiểm!")
 ```
 
 ---
@@ -474,7 +474,7 @@ if are_approaching:
 ### 📖 Mô tả
 Hệ thống ngăn chặn Pacman bị kẹt trong vòng lặp di chuyển (ping-pong, quay vòng).
 
-### 🎯 Các vấn đề giải quyết
+### Các vấn đề giải quyết
 
 | Vấn đề | Mô tả | Giải pháp |
 |--------|-------|----------|
@@ -512,14 +512,14 @@ if unique_directions <= 2:
         # → Force perpendicular turn
 ```
 
-### ⚡ Force Emergency Movement
+### Force Emergency Movement
 
 ```python
 # Khi bị kẹt quá lâu (>1 second)
 time_since_last_escape = current_time - pacman_ai.last_escape_time
 
 if time_since_last_escape > 1000 and pacman_ai.escape_timeout_count > 1:
-    print("⚡ FORCED MOVEMENT ACTIVATED!")
+    print("FORCED MOVEMENT ACTIVATED!")
     
     # Tìm tất cả hướng hợp lệ
     valid_moves = []
@@ -546,7 +546,7 @@ adaptive_cooldown = base_cooldown + (escape_timeout_count * 100)
 # → Ngăn spam direction changes
 ```
 
-### 🎯 Bonus cho hướng mới
+### Bonus cho hướng mới
 
 ```python
 # Ưu tiên hướng chưa dùng gần đây
@@ -592,7 +592,7 @@ if nearby_ghosts:
     # Kích hoạt emergency avoidance
     success = ai.emergency_ghost_avoidance(nearby_ghosts)
     if success:
-        print("✅ Emergency avoidance activated!")
+        print("Emergency avoidance activated!")
 
 # === FRAME 2: Kiểm tra bom trên đường đi ===
 if game.current_goal:
@@ -610,13 +610,13 @@ if game.current_goal:
 freedom = ai.check_movement_freedom(debug=True)
 
 if freedom['is_trapped']:
-    print("⚠️  BỊ KẸT! Kích hoạt BFS escape...")
+    print("BỊ KẸT! Kích hoạt BFS escape...")
     
     # Tìm lối thoát tốt nhất
     escape_route = ai.find_bfs_escape_route(debug=True)
     
     if escape_route:
-        print(f"✅ Tìm thấy lối thoát: {escape_route['destination']}")
+        print(f"Tìm thấy lối thoát: {escape_route['destination']}")
         print(f"   Safety score: {escape_route['safety_score']}")
         
         # Áp dụng escape strategy
@@ -627,7 +627,7 @@ if game.auto_path:
     threat_detected, closest_threat, distance = ai.check_ghost_on_path_to_goal()
     
     if threat_detected:
-        print(f"⚠️  Ma phát hiện trên đường đi!")
+        print(f"Ma phát hiện trên đường đi!")
         print(f"   Ma gần nhất: {closest_threat}, cách {distance} ô")
         
         # Tìm đường thay thế
@@ -648,13 +648,13 @@ if len(ai.escape_direction_history) > 4:
 
 ## 📈 Hiệu suất và Tối ưu
 
-### ⚡ Caching Strategy
+### Caching Strategy
 
 ```python
 # Safety Score Cache (100ms TTL)
 cache_key = (test_row, test_col, len(danger_analysis))
 if cache_key in score_cache and is_recent(cache_key):
-    return cached_score  # ⚡ ~50x faster
+    return cached_score  # ~50x faster
 
 # Ghost Distance History (1 second)
 if ghost_id in ghost_distance_history:
@@ -662,7 +662,7 @@ if ghost_id in ghost_distance_history:
     # Analyze trend without recalculating
 ```
 
-### 🎯 Độ phức tạp thuật toán
+### Độ phức tạp thuật toán
 
 | Thuật toán | Độ phức tạp | Ghi chú |
 |-----------|-------------|---------|
