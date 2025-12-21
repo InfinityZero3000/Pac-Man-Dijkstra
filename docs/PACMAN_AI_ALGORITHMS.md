@@ -98,7 +98,7 @@ bomb_threat = pacman_ai.check_bomb_threat_level(target_position=(15, 20))
 #     'threat_level': 'COMPLETE_BLOCKAGE',  # Mức đe dọa
 #     'is_blocked': True,                    # Có bị chặn không
 #     'alternatives': 0,                     # Số lựa chọn khác
-#     'warning': '🆘 TẤT CẢ ĐƯỜNG ĐI BỊ CHẶN!',
+#     'warning': 'TẤT CẢ ĐƯỜNG ĐI BỊ CHẶN!',
 #     'bomb_count': 5,                       # Số lượng bom
 #     'pacman_pos': (10, 15),               # Vị trí Pacman
 #     'target_pos': (15, 20)                # Vị trí mục tiêu
@@ -599,7 +599,7 @@ if game.current_goal:
     bomb_threat = ai.check_bomb_threat_level()
     
     if bomb_threat['threat_level'] == 'COMPLETE_BLOCKAGE':
-        print("🆘 Bị bom chặn hoàn toàn!")
+        print("Bị bom chặn hoàn toàn!")
         print("   Tìm target thay thế...")
         
         # Sử dụng BFS để tìm fallback target

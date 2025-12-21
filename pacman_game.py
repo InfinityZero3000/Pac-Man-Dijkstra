@@ -2554,7 +2554,7 @@ class PacmanGame:
             # Hiển thị cảnh báo đặc biệt cho complete blockage (rate limited)
             if blockage_level == 'COMPLETE_BLOCKAGE':
                 if not hasattr(self, '_last_blockage_warning') or pygame.time.get_ticks() - self._last_blockage_warning > 2000:
-                    print("🆘 Pacman bị bom bao vây!")
+                    print("Pacman bị bom bao vây!")
                     self._last_blockage_warning = pygame.time.get_ticks()
         
         # Ưu tiên A* cho đường đến goal (nhanh hơn) với bom là obstacles
@@ -2604,7 +2604,7 @@ class PacmanGame:
             )
             
             if blockage_level == 'COMPLETE_BLOCKAGE':
-                print("🆘 Lối thoát bị bom chặn!")
+                print("Lối thoát bị bom chặn!")
         
         try:
             path, distance = self.dijkstra.shortest_path_with_bomb_avoidance(pacman_pos, exit_goal, bomb_grid)
