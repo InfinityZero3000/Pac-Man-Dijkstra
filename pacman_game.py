@@ -5,7 +5,7 @@ import math
 import signal
 from maze_generator import MazeGenerator
 from dijkstra_algorithm import DijkstraAlgorithm
-from public.astar_algorithm import AStarAlgorithm
+from astar_algorithm import AStarAlgorithm
 from pacman_ai import PacmanAI
 from ghost_avoidance_visualizer import GhostAvoidanceVisualizer
 import config
