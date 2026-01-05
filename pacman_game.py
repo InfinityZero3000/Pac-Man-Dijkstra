@@ -200,6 +200,7 @@ class PacmanGame:
         self.auto_mode = False
         self.auto_path = []
         self.auto_target = None
+        self.auto_speed_index = config.AUTO_MODE_DEFAULT_SPEED_INDEX  # Mức tốc độ hiện tại trong auto mode
 
         # Biến di chuyển tập trung vào mục tiêu
         self.current_goal = None
@@ -1232,27 +1233,48 @@ class PacmanGame:
         """Draw control instructions on right panel (fixed position at bottom)"""  
         maze_width = self.maze_gen.width * self.cell_size
         panel_x = maze_width + 10
-        
-        # FIXED POSITION: Always at bottom, never moves
-        # This ensures stable UI regardless of FPS or Visualizer state
-        panel_y = self.screen_height - 360  # Raise panel 40px to avoid clipping
-        
+
         panel_width = 360
-        
-        small_font = pygame.font.SysFont("arial", 13, bold=True)
-        tiny_font = pygame.font.SysFont("arial", 11)
-        
+
+        # Font sizes (configurable)
+        title_font_size = getattr(config, 'RIGHT_PANEL_TITLE_FONT_SIZE', 18)
+        small_font_size = getattr(config, 'RIGHT_PANEL_SMALL_FONT_SIZE', 16)
+        tiny_font_size = getattr(config, 'RIGHT_PANEL_TINY_FONT_SIZE', 14)
+        line_height = getattr(config, 'RIGHT_PANEL_LINE_HEIGHT', 20)
+
+        small_font = pygame.font.SysFont("arial", small_font_size, bold=True)
+        tiny_font = pygame.font.SysFont("arial", tiny_font_size)
+
         # Title
-        title_font = pygame.font.SysFont("arial", 15, bold=True)
+        title_font = pygame.font.SysFont("arial", title_font_size, bold=True)
+
+        # Estimate required panel height so bigger fonts don't get clipped.
+        # Keep panel anchored to the bottom with a small margin.
+        controls_count = 12
+        estimated_panel_height = (
+            25 +                 # title -> first line offset
+            (line_height + 5) +  # mode line + extra spacing
+            (controls_count * line_height) +
+            10 + 20 +            # spacing + STATUS title spacing
+            (4 * line_height) +  # Bombs, Ghosts, optional Path, optional Ghosts info
+            10                   # bottom margin
+        )
+
+        # FIXED POSITION: anchored to bottom (dynamic offset based on content height)
+        panel_y = max(10, self.screen_height - estimated_panel_height)
         title = title_font.render("CONTROLS", True, self.CYAN)
         self.screen.blit(title, (panel_x, panel_y))
         
         y = panel_y + 25
-        line_height = 18
         
-        # Game mode status
-        mode_text = "AUTO" if self.auto_mode else "MANUAL"
-        mode_color = self.YELLOW if self.auto_mode else self.WHITE
+        # Game mode status with speed
+        if self.auto_mode:
+            speed_multiplier = config.AUTO_MODE_SPEED_LEVELS[self.auto_speed_index]
+            mode_text = f"AUTO [{speed_multiplier}x]"
+            mode_color = self.YELLOW
+        else:
+            mode_text = "MANUAL"
+            mode_color = self.WHITE
         mode = small_font.render(f"Mode: {mode_text}", True, mode_color)
         self.screen.blit(mode, (panel_x, y))
         y += line_height + 5
@@ -1260,6 +1282,8 @@ class PacmanGame:
         # Controls list
         controls = [
             ("A", "Toggle Auto/Manual", self.YELLOW),
+            ("+/-", "Speed Up/Down", self.CYAN),
+            ("0", "Reset Speed", self.CYAN),
             ("H", "Show/Hide Path Hint", self.GREEN if self.show_shortest_path else self.WHITE),
             ("V", "Toggle Visualization", self.GREEN if (self.visualizer and self.visualizer.enabled) else self.WHITE),
             ("B", "Debug Info", self.WHITE),
@@ -1281,37 +1305,37 @@ class PacmanGame:
             self.screen.blit(desc_text, (panel_x + 45, y))
             y += line_height
         
-        # Các chỉ báo trạng thái
+        # Status indicators
         y += 10
-        status_title = small_font.render("TRẠNG THÁI", True, self.CYAN)
+        status_title = small_font.render("STATUS", True, self.CYAN)
         self.screen.blit(status_title, (panel_x, y))
         y += 20
         
-        # Trạng thái bom
-        bomb_status = "BẬT" if self.bombs_enabled else "TẮT"
+        # Bomb status
+        bomb_status = "ON" if self.bombs_enabled else "OFF"
         bomb_color = self.RED if self.bombs_enabled else (100, 100, 100)
-        bomb_text = tiny_font.render(f" Bom: {bomb_status}", True, bomb_color)
+        bomb_text = tiny_font.render(f" Bombs: {bomb_status}", True, bomb_color)
         self.screen.blit(bomb_text, (panel_x, y))
         y += line_height
         
-        # Trạng thái ma
-        ghost_status = "BẬT" if self.ghosts_enabled else "TẮT"
+        # Ghost status
+        ghost_status = "ON" if self.ghosts_enabled else "OFF"
         ghost_color = self.PINK if self.ghosts_enabled else (100, 100, 100)
-        ghost_text = tiny_font.render(f" Ma: {ghost_status}", True, ghost_color)
+        ghost_text = tiny_font.render(f" Ghosts: {ghost_status}", True, ghost_color)
         self.screen.blit(ghost_text, (panel_x, y))
         y += line_height
         
-        # Trạng thái đường gợi ý
+        # Path hint status
         if self.show_shortest_path:
             path_steps = len(self.shortest_path) - 1 if self.shortest_path else 0
-            path_text = tiny_font.render(f" Đường: {path_steps} bước", True, self.GREEN)
+            path_text = tiny_font.render(f" Path: {path_steps} steps", True, self.GREEN)
             self.screen.blit(path_text, (panel_x, y))
             y += line_height
         
-        # Thông tin ma
+        # Ghost info
         if len(self.ghosts) > 0:
             ghost_modes = [f"{g['name'][:1]}:{g['mode'][:3]}" for g in self.ghosts[:2]]
-            ghost_text = tiny_font.render(f" Ma: {' '.join(ghost_modes)}", True, self.PINK)
+            ghost_text = tiny_font.render(f" Ghosts: {' '.join(ghost_modes)}", True, self.PINK)
             self.screen.blit(ghost_text, (panel_x, y))
 
     def draw_fps_info(self):
@@ -1443,12 +1467,12 @@ class PacmanGame:
         score_font = pygame.font.SysFont("arial", 20, bold=True)
         
         # Current score
-        score_text = score_font.render(f"Điểm cuối: {self.score}", True, self.WHITE)
+        score_text = score_font.render(f"Final Score: {self.score}", True, self.WHITE)
         score_rect = score_text.get_rect(center=(box_x + box_width // 2, box_y + 100))
         self.screen.blit(score_text, score_rect)
         
         # Level info
-        level_text = score_font.render(f"Hoàn thành Level {self.level}", True, (0, 255, 127))  # Light blue
+        level_text = score_font.render(f"Completed Level {self.level}", True, (0, 255, 127))  # Light blue
         level_rect = level_text.get_rect(center=(box_x + box_width // 2, box_y + 160))
         self.screen.blit(level_text, level_rect)
         
@@ -1458,11 +1482,11 @@ class PacmanGame:
         
         # Instructions
         instruction_font = pygame.font.SysFont("arial", 16, bold=True)
-        next_text = instruction_font.render("Nhấn N để sang level", True, (144, 238, 144))  # Light green
+        next_text = instruction_font.render("Press N for Next Level", True, (144, 238, 144))  # Light green
         next_rect = next_text.get_rect(center=(box_x + box_width // 2, box_y + 220))
         self.screen.blit(next_text, next_rect)
         
-        restart_text = instruction_font.render("Nhấn R để chơi lại", True, (255, 182, 193))  # Light pink
+        restart_text = instruction_font.render("Press R to Restart", True, (255, 182, 193))  # Light pink
         restart_rect = restart_text.get_rect(center=(box_x + box_width // 2, box_y + 245))
         self.screen.blit(restart_text, restart_rect)
 
@@ -1521,16 +1545,16 @@ class PacmanGame:
         death_color = (255, 255, 255)
         if hasattr(self, 'last_death_cause') and self.last_death_cause:
             if "Ma " in self.last_death_cause:
-                death_cause = f" Bị {self.last_death_cause} Bắt"
+                death_cause = f"Caught by {self.last_death_cause}"
                 death_color = (255, 182, 193)  # Light pink
             elif self.last_death_cause == "Bom nổ":
-                death_cause = " Chết Vì Bom Nổ"
+                death_cause = "Bomb Explosion"
                 death_color = (255, 140, 0)    # Dark orange
             else:
-                death_cause = f" {self.last_death_cause}"
+                death_cause = f"{self.last_death_cause}"
                 death_color = (255, 99, 71)   # Tomato red
         else:
-            death_cause = " Hết Mạng Sống"
+            death_cause = "Out of Lives"
             death_color = (255, 99, 71)   # Tomato red
         
         # Death cause
@@ -1544,7 +1568,7 @@ class PacmanGame:
         # Số hạt đã ăn
         dots_collected = len([pos for pos in self.initial_dots if pos not in self.dots])
         total_dots = len(self.initial_dots) if hasattr(self, 'initial_dots') else len(self.dots)
-        dots_text = stats_small_font.render(f"Hạt đã ăn: {dots_collected}/{total_dots}", True, (173, 216, 230))  # Light blue
+        dots_text = stats_small_font.render(f"Dots Collected: {dots_collected}/{total_dots}", True, (173, 216, 230))  # Light blue
         dots_rect = dots_text.get_rect(center=(box_x + box_width // 2, box_y + 170))
         self.screen.blit(dots_text, dots_rect)
         
@@ -1555,7 +1579,7 @@ class PacmanGame:
             survival_time = (end_time - self.start_time) // 1000
             minutes = survival_time // 60
             seconds = survival_time % 60
-            time_text = stats_small_font.render(f"Thời gian sống sót: {minutes:02d}:{seconds:02d}", True, (144, 238, 144))  # Light green
+            time_text = stats_small_font.render(f"Survival Time: {minutes:02d}:{seconds:02d}", True, (144, 238, 144))  # Light green
             time_rect = time_text.get_rect(center=(box_x + box_width // 2, box_y + 195))
             self.screen.blit(time_text, time_rect)
         
@@ -1617,6 +1641,11 @@ class PacmanGame:
                 # Tính tốc độ - có điều chỉnh tốc độ động
                 base_speed = config.PACMAN_SPEED
                 
+                # Áp dụng hệ số tốc độ auto mode nếu đang bật
+                if self.auto_mode:
+                    auto_speed_multiplier = config.AUTO_MODE_SPEED_LEVELS[self.auto_speed_index]
+                    base_speed = base_speed * auto_speed_multiplier
+                
                 if config.ENABLE_DYNAMIC_SPEED:
                     # Tính khoảng cách đến con ma gần nhất
                     min_ghost_distance = float('inf')
@@ -1643,6 +1672,7 @@ class PacmanGame:
                     speed = base_speed
                 
                 step_size = speed * self.delta_time  # Distance to move this frame
+
                 
                 # Move towards target position
                 if abs(self.pacman_pos[0] - target_col) > 0.01:
@@ -1743,6 +1773,12 @@ class PacmanGame:
                     # Smooth animation towards target block - SLOWER than Pacman
                     # Time-based movement for consistency
                     ghost_speed = config.GHOST_SPEED  # Use config value
+                    
+                    # Áp dụng hệ số tốc độ auto mode nếu đang bật (giống Pacman)
+                    if self.auto_mode:
+                        auto_speed_multiplier = config.AUTO_MODE_SPEED_LEVELS[self.auto_speed_index]
+                        ghost_speed = ghost_speed * auto_speed_multiplier
+                    
                     step_size = ghost_speed * self.delta_time  # Time-based like Pacman
                     
                     # Move towards target position
@@ -1880,6 +1916,12 @@ class PacmanGame:
                 
                 # Move towards target waypoint - eyes move faster than normal ghosts
                 eyes_speed = config.GHOST_EYES_SPEED  # Use config value
+                
+                # Áp dụng hệ số tốc độ auto mode nếu đang bật (giống Pacman)
+                if self.auto_mode:
+                    auto_speed_multiplier = config.AUTO_MODE_SPEED_LEVELS[self.auto_speed_index]
+                    eyes_speed = eyes_speed * auto_speed_multiplier
+                
                 step_size = eyes_speed * self.delta_time  # Time-based movement
                 
                 # Calculate direction to target waypoint
@@ -2869,11 +2911,17 @@ class PacmanGame:
                     best_escape = direction
             
             if best_escape:
-                print(f" EMERGENCY: {len(critical_ghosts)} ma va chạm, thoát ngay!")
+                print(f"⚠️ EMERGENCY: {len(critical_ghosts)} ma va chạm, thoát ngay!")
                 self.pacman_next_direction = best_escape
                 return
             else:
-                print(" EMERGENCY: Không tìm được lối thoát!")
+                # Không tìm được lối thoát,  thử di chuyển về phía goal
+                print("⚠️ EMERGENCY: Không tìm được lối thoát! Di chuyển về goal.")
+                pacman_col = int(round(self.pacman_pos[0]))
+                pacman_row = int(round(self.pacman_pos[1]))
+                if hasattr(self, 'exit_gate'):
+                    goal_row, goal_col = self.exit_gate
+                    self.emergency_goal_move(pacman_col, pacman_row, goal_col, goal_row)
                 return
 
         # Khởi tạo biến cho hệ thống né ma cải tiến
@@ -4343,6 +4391,24 @@ class PacmanGame:
                     self.game_state = "paused" if self.game_state == "playing" else "playing"
                 elif event.key == pygame.K_a:
                     self.toggle_auto_mode()
+                # Điều chỉnh tốc độ auto mode
+                elif event.key == pygame.K_EQUALS or event.key == pygame.K_PLUS:
+                    # Tăng tốc độ
+                    if self.auto_speed_index < len(config.AUTO_MODE_SPEED_LEVELS) - 1:
+                        self.auto_speed_index += 1
+                        multiplier = config.AUTO_MODE_SPEED_LEVELS[self.auto_speed_index]
+                        print(f"⚡ Tốc độ auto: {multiplier}x")
+                elif event.key == pygame.K_MINUS:
+                    # Giảm tốc độ
+                    if self.auto_speed_index > 0:
+                        self.auto_speed_index -= 1
+                        multiplier = config.AUTO_MODE_SPEED_LEVELS[self.auto_speed_index]
+                        print(f"🐌 Tốc độ auto: {multiplier}x")
+                elif event.key == pygame.K_0:
+                    # Reset về tốc độ mặc định
+                    self.auto_speed_index = config.AUTO_MODE_DEFAULT_SPEED_INDEX
+                    multiplier = config.AUTO_MODE_SPEED_LEVELS[self.auto_speed_index]
+                    print(f"🔄 Reset tốc độ auto: {multiplier}x")
                 elif event.key == pygame.K_h:
                     self.show_shortest_path = not self.show_shortest_path
                     if self.show_shortest_path:
@@ -4490,6 +4556,10 @@ class PacmanGame:
         
         self.generate_level()
         self.place_dots_and_pellets()
+        
+        # Load bombs từ maze generator (QUAN TRỌNG: phải load trước reset_positions)
+        self.load_bombs_from_maze_generator()
+        
         self.reset_positions()
 
     def create_new_game(self):
@@ -4602,7 +4672,13 @@ class PacmanGame:
             # Update ghost scared timers BEFORE collision check
             for ghost in self.ghosts:
                 if ghost.get('scared', False):
-                    ghost['scared_timer'] -= 1
+                    # Áp dụng hệ số tốc độ auto mode - timer giảm nhanh hơn khi tăng tốc
+                    timer_decrement = 1
+                    if self.auto_mode:
+                        auto_speed_multiplier = config.AUTO_MODE_SPEED_LEVELS[self.auto_speed_index]
+                        timer_decrement = auto_speed_multiplier  # Giảm nhanh hơn khi tăng tốc
+                    
+                    ghost['scared_timer'] -= timer_decrement
                     if ghost['scared_timer'] <= 0:
                         ghost['scared'] = False
                         ghost['scared_timer'] = 0

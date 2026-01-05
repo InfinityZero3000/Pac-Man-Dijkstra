@@ -117,22 +117,6 @@ class BFSUtilities:
         - Quyết định có nên aggressive hay defensive
         - Detect trapped situations sớm
         - Choose safer routes
-        
-        Args:
-            pacman_pos: (row, col)
-            ghost_positions: List[(row, col)]
-            bomb_positions: List[(row, col)] hoặc None
-            radius: Bán kính phân tích (default 10)
-            
-        Returns:
-            dict {
-                'total_reachable': int,
-                'safe_positions': int,
-                'danger_positions': int,
-                'freedom_percentage': float,
-                'is_trapped': bool,
-                'threat_level': str
-            }
         """
         bomb_positions = bomb_positions or []
         

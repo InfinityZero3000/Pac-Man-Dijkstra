@@ -59,3 +59,14 @@ MAX_DELTA_TIME = 1.0 / 30.0  # Cap delta time to prevent large jumps (minimum 30
 # Performance Optimization Settings
 COLLISION_CHECK_DISTANCE = 60  # Max distance to check for dot collisions (pixels)
 ENABLE_SPATIAL_OPTIMIZATION = True  # Use spatial partitioning for collision detection
+
+# Auto Mode Speed Control Settings
+AUTO_MODE_SPEED_LEVELS = [0.5, 1.0, 1.5, 2.0, 3.0, 5.0]  # Các mức tốc độ: 0.5x, 1x, 1.5x, 2x, 3x, 5x
+AUTO_MODE_DEFAULT_SPEED_INDEX = 1  # Index mặc định (1.0x - tốc độ bình thường)
+
+# UI - Right Control Panel (font sizes)
+# Increase these values if the right-side control panel text is too small.
+RIGHT_PANEL_TITLE_FONT_SIZE = 18
+RIGHT_PANEL_SMALL_FONT_SIZE = 16
+RIGHT_PANEL_TINY_FONT_SIZE = 14
+RIGHT_PANEL_LINE_HEIGHT = 20

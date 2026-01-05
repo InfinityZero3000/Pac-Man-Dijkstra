@@ -24,7 +24,6 @@ class PacmanAI:
     def __init__(self, game_instance):
         """
         Khởi tạo AI với tham chiếu đến game instance
-        
         Args:
             game_instance: Instance của PacmanGame để truy cập maze, ghosts, etc.
         """
@@ -562,6 +561,25 @@ class PacmanAI:
                 if best_dir:
                     self.escape_direction = best_dir
                     return (best_dir, 'MEDIUM')
+
+            # Fallback: nếu không có escape direction và không có ghost trong zone,
+            # vẫn cố gắng giữ Pacman di chuyển (tránh đứng im quá lâu).
+            pacman_row = int(self.game.pacman_pos[1])
+            pacman_col = int(self.game.pacman_pos[0])
+            current_dir = self.game.pacman_direction
+            if current_dir and current_dir != [0, 0]:
+                test_col = pacman_col + current_dir[0]
+                test_row = pacman_row + current_dir[1]
+                if self.game.is_valid_position(test_col, test_row):
+                    return (current_dir, 'MEDIUM')
+
+            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                test_col = pacman_col + dx
+                test_row = pacman_row + dy
+                if self.game.is_valid_position(test_col, test_row):
+                    fallback_dir = [dx, dy]
+                    self.escape_direction = fallback_dir
+                    return (fallback_dir, 'MEDIUM')
         
         # Sau cooldown: Kiểm tra có ghost nào quay lại không
         if self.ghosts_in_zone:
@@ -570,6 +588,11 @@ class PacmanAI:
                 # Có ghost đang tiến đến, chuyển sang EVADING
                 self._transition_to_state(self.STATE_EVADING)
                 return self._evade_movement()
+
+        # Không còn ghost đe dọa và đã qua cooldown -> quay lại NORMAL để game loop
+        # tiếp tục đi goal (tránh bị kẹt ở SAFE_RETURN quá lâu).
+        if time_in_state >= safe_return_cooldown:
+            self._transition_to_state(self.STATE_NORMAL)
         
         # An toàn và đã qua cooldown, tiếp tục về goal
         return None
